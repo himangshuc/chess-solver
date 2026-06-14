@@ -15,6 +15,7 @@ import config
 from engine import analyze_best_move_once
 from fen_utils import validate_fen, sanitize_fen, board_from_fen, board_to_pretty, side_to_move as fen_side
 from cv_utils import find_board_and_warp, detect_pieces_yolo, detect_pieces_classical, map_detections_to_fen
+from chess_component import chess_board as _chess_board_component
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -497,21 +498,33 @@ if st.session_state.get("game_active"):
     # --- two-column layout: board | controls ---
     col_brd, col_ctrl = st.columns([3, 2])
 
+    # Resolve arrows for the component
+    _last_from = chess.Move.from_uci(history[-1]).uci()[:2] if history else None
+    _last_to   = chess.Move.from_uci(history[-1]).uci()[2:4] if history else None
+    _sf_from   = best_move.uci()[:2] if best_move else None
+    _sf_to     = best_move.uci()[2:4] if best_move else None
+
     with col_brd:
-        last_arrow = None
-        if history:
-            last = chess.Move.from_uci(history[-1])
-            last_arrow = chess.svg.Arrow(last.from_square, last.to_square, color="#4ade80")
-        sf_arrow = chess.svg.Arrow(best_move.from_square, best_move.to_square, color="#f97316") if best_move else None
-        arrows = [a for a in [last_arrow, sf_arrow] if a]
-        svg = chess.svg.board(
-            game_board,
-            arrows=arrows,
-            flipped=False,
-            size=440,
-            style=".square.light{fill:#f0d9b5}.square.dark{fill:#b58863}",
+        move_made = _chess_board_component(
+            fen=game_board.fen(),
+            sf_from=_sf_from,
+            sf_to=_sf_to,
+            last_from=_last_from,
+            last_to=_last_to,
+            size=420,
+            key="interactive_board",
         )
-        st.markdown(f'<div style="display:flex;justify-content:center">{svg}</div>', unsafe_allow_html=True)
+        # Process move returned by the component
+        if move_made and not game_board.is_game_over():
+            try:
+                m = game_board.parse_uci(move_made)
+                if m in game_board.legal_moves:
+                    game_board.push(m)
+                    history.append(m.uci())
+                    st.session_state["game_sf_move"] = None
+                    st.rerun()
+            except Exception:
+                pass
 
     with col_ctrl:
         if game_board.is_game_over():
@@ -537,34 +550,6 @@ if st.session_state.get("game_active"):
                     history.append(best_move.uci())
                     st.session_state["game_sf_move"] = None
                     st.rerun()
-
-            st.markdown("**Or enter your own move:**")
-            move_input = st.text_input(
-                "Move (e.g. e2e4 or Nf3)",
-                key="move_input",
-                label_visibility="collapsed",
-                placeholder="e2e4 or Nf3…",
-            )
-            if st.button("Make move", use_container_width=True):
-                move_input = move_input.strip()
-                parsed = None
-                if move_input:
-                    try:
-                        parsed = game_board.parse_uci(move_input)
-                    except Exception:
-                        pass
-                    if parsed is None:
-                        try:
-                            parsed = game_board.parse_san(move_input)
-                        except Exception:
-                            pass
-                if parsed and parsed in game_board.legal_moves:
-                    game_board.push(parsed)
-                    history.append(parsed.uci())
-                    st.session_state["game_sf_move"] = None
-                    st.rerun()
-                elif move_input:
-                    st.error(f"Illegal move: {move_input!r}")
 
             # Move history
             if history:

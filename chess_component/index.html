@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 6px; background: transparent; }
+    #wrap { display: flex; justify-content: center; }
+    #board { width: 400px; }
+
+    /* Square highlight overlays */
+    .square-55d63 { position: relative !important; }
+    .sq-highlight {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .sq-selected  { background: rgba(255,255,0,0.45); }
+    .sq-dest      { background: radial-gradient(circle, rgba(20,200,80,0.55) 30%, transparent 70%); }
+    .sq-sf-from   { background: rgba(249,115,22,0.40); }
+    .sq-sf-to     { background: rgba(249,115,22,0.55); }
+    .sq-last-from { background: rgba(130,202,100,0.40); }
+    .sq-last-to   { background: rgba(130,202,100,0.55); }
+  </style>
+  <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
+  <link  rel="stylesheet"
+         href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+  <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+  <!-- chess.js v0.10.3 — stable API (game_over / turn / move) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+</head>
+<body>
+<div id="wrap"><div id="board"></div></div>
+<script>
+// ── Streamlit postMessage protocol ────────────────────────────────────────────
+function post(type, extra) {
+  window.parent.postMessage(Object.assign({ type: type }, extra || {}), '*');
+}
+function setComponentValue(val) { post('streamlit:setComponentValue', { value: val }); }
+function setHeight(h)           { post('streamlit:setFrameHeight',    { height: h  }); }
+
+// ── State ─────────────────────────────────────────────────────────────────────
+var board         = null;
+var game          = null;
+var selectedSq    = null;
+var lastArgs      = {};
+
+// ── Highlight helpers ─────────────────────────────────────────────────────────
+function clearOverlays() {
+  $('.sq-highlight').remove();
+}
+
+function overlay(sq, cls) {
+  var $sq = $('.square-' + sq);
+  if ($sq.length) $sq.append('<div class="sq-highlight ' + cls + '"></div>');
+}
+
+function drawHighlights(a) {
+  clearOverlays();
+  if (a.last_from) overlay(a.last_from, 'sq-last-from');
+  if (a.last_to)   overlay(a.last_to,   'sq-last-to');
+  if (a.sf_from)   overlay(a.sf_from,   'sq-sf-from');
+  if (a.sf_to)     overlay(a.sf_to,     'sq-sf-to');
+}
+
+function drawSelection(sq) {
+  clearOverlays();
+  drawHighlights(lastArgs);
+  if (!sq) return;
+  overlay(sq, 'sq-selected');
+  var moves = game.moves({ square: sq, verbose: true });
+  moves.forEach(function(m) { overlay(m.to, 'sq-dest'); });
+}
+
+// ── Move handling (shared by click and drag) ──────────────────────────────────
+function tryMove(from, to) {
+  if (game.game_over()) return false;
+  var move = game.move({ from: from, to: to, promotion: 'q' });
+  if (!move) return false;
+  selectedSq = null;
+  clearOverlays();
+  board.position(game.fen(), false);
+  setComponentValue(move.from + move.to + (move.promotion || ''));
+  return true;
+}
+
+// ── Board init ────────────────────────────────────────────────────────────────
+function initBoard(a) {
+  if (board) { board.destroy(); board = null; }
+
+  game = new Chess(a.fen);
+  var draggable = !game.game_over();
+
+  board = Chessboard('board', {
+    position:    a.fen,
+    draggable:   draggable,
+    pieceTheme:  'https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/img/chesspieces/wikipedia/{piece}.png',
+
+    onDragStart: function(source, piece) {
+      if (game.game_over()) return false;
+      if (piece[0] !== game.turn()) return false;
+      selectedSq = source;
+      drawSelection(source);
+    },
+
+    onDrop: function(source, target) {
+      if (!tryMove(source, target)) {
+        selectedSq = null;
+        drawHighlights(lastArgs);
+        return 'snapback';
+      }
+    },
+
+    onSnapEnd: function() {
+      board.position(game.fen(), false);
+      setTimeout(function() { setHeight(document.body.scrollHeight + 4); }, 50);
+    },
+
+    onSquareClick: function(square) {
+      if (game.game_over()) return;
+      if (selectedSq && selectedSq !== square) {
+        if (tryMove(selectedSq, square)) return;
+      }
+      // Select (or re-select) a piece
+      var pos  = board.position();
+      var piece = pos[square];
+      if (piece && piece[0] === game.turn()) {
+        selectedSq = square;
+        drawSelection(square);
+      } else {
+        selectedSq = null;
+        drawHighlights(lastArgs);
+      }
+    },
+  });
+
+  $('#board').width(a.size).height(a.size);
+  board.resize();
+  drawHighlights(a);
+  setTimeout(function() { setHeight(document.body.scrollHeight + 4); }, 80);
+}
+
+// ── Render event from Streamlit ───────────────────────────────────────────────
+window.addEventListener('message', function(evt) {
+  if (evt.data.type !== 'streamlit:render') return;
+  var a = evt.data.args || {};
+
+  var fenChanged  = (a.fen  !== lastArgs.fen);
+  var sizeChanged = (a.size !== lastArgs.size);
+  lastArgs = a;
+
+  if (!board || fenChanged || sizeChanged) {
+    initBoard(a);
+  } else {
+    // Same position — just refresh highlights (e.g. SF suggestion arrived)
+    drawHighlights(a);
+  }
+});
+
+// Signal ready
+post('streamlit:componentReady', { apiVersion: 1 });
+</script>
+</body>
+</html>
