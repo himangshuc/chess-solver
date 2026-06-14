@@ -1,5 +1,6 @@
 """Chess Solver — Image → Best Move via Stockfish."""
 from __future__ import annotations
+import hashlib
 import logging
 import urllib.request
 from pathlib import Path
@@ -231,25 +232,38 @@ if warped is None:
 
 flip_board = st.session_state.get("flip_board", False)
 
-# YOLO runs on the original orientation — rotating causes bbox bias to invert,
-# which breaks square-mapping. Classical CV needs rotation for color analysis.
-detection_method = "YOLO"
-yolo_err_msg = None
-with st.spinner("Detecting pieces…"):
-    resolved_weights = _ensure_model() or yolo_weights_path
-    try:
-        detections = detect_pieces_yolo(warped, weights_path=resolved_weights, conf_thresh=conf_thresh)
-    except Exception as yolo_err:
-        detection_method = "Classical CV"
-        yolo_err_msg = f"{yolo_err.__class__.__name__}: {yolo_err}"
-        warped_cv = cv2.rotate(warped, cv2.ROTATE_180) if flip_board else warped
+# Cache detections keyed by image content + orientation so that toggling
+# side-to-move or swap-colors doesn't re-run YOLO (only orientation change does).
+_img_hash = hashlib.md5(warped.tobytes()).hexdigest()[:16]
+_det_cache_key = f"{_img_hash}_{flip_board}_{conf_thresh}"
+
+if st.session_state.get("_det_cache_key") == _det_cache_key:
+    detections = st.session_state["_detections"]
+    detection_method = st.session_state["_det_method"]
+    yolo_err_msg = st.session_state.get("_yolo_err")
+else:
+    # YOLO runs on original orientation; classical CV needs the rotated image
+    with st.spinner("Detecting pieces…"):
+        resolved_weights = _ensure_model() or yolo_weights_path
+        detection_method = "YOLO"
+        yolo_err_msg = None
         try:
-            detections = detect_pieces_classical(warped_cv)
-        except Exception as e:
-            st.error(f"Detection failed: {e}")
-            if debug_mode:
-                st.exception(e)
-            st.stop()
+            detections = detect_pieces_yolo(warped, weights_path=resolved_weights, conf_thresh=conf_thresh)
+        except Exception as yolo_err:
+            detection_method = "Classical CV"
+            yolo_err_msg = f"{yolo_err.__class__.__name__}: {yolo_err}"
+            warped_cv = cv2.rotate(warped, cv2.ROTATE_180) if flip_board else warped
+            try:
+                detections = detect_pieces_classical(warped_cv)
+            except Exception as e:
+                st.error(f"Detection failed: {e}")
+                if debug_mode:
+                    st.exception(e)
+                st.stop()
+    st.session_state["_det_cache_key"] = _det_cache_key
+    st.session_state["_detections"] = detections
+    st.session_state["_det_method"] = detection_method
+    st.session_state["_yolo_err"] = yolo_err_msg
 
 # Draw detection overlay on display image (rotated for classical CV, original for YOLO)
 display_warped = cv2.rotate(warped, cv2.ROTATE_180) if (flip_board and detection_method == "Classical CV") else warped
@@ -305,17 +319,30 @@ with col_swap:
 
 if orient_w_btn:
     st.session_state["flip_board"] = False
+    st.toast("Switched to white-at-bottom — redetecting…")
+    st.rerun()
 if orient_b_btn:
     st.session_state["flip_board"] = True
+    st.toast("Switched to black-at-bottom — redetecting…")
+    st.rerun()
 if white_btn:
     st.session_state["side_move"] = "w"
+    st.toast("White to move")
+    st.rerun()
 if black_btn:
     st.session_state["side_move"] = "b"
+    st.toast("Black to move")
+    st.rerun()
 if swap_btn:
     st.session_state["swap_colors"] = not st.session_state.get("swap_colors", False)
+    st.toast("Piece colors swapped")
+    st.rerun()
 
 side_to_move_fen = st.session_state.get("side_move", "w")
 side_label = "White" if side_to_move_fen == "w" else "Black"
+_orient_label = "Black at bottom" if flip_board else "White at bottom"
+_swap_label = " · Colors swapped" if st.session_state.get("swap_colors") else ""
+st.caption(f"View: {_orient_label} · {side_label} to move{_swap_label}")
 
 # Swap piece colors in FEN if toggled (invert uppercase ↔ lowercase in piece placement)
 if st.session_state.get("swap_colors", False):
