@@ -350,13 +350,16 @@ else:
         san = board.san(best_move)
         uci = best_move.uci()
 
-        # Eval pill
+        # Eval pill — cp is always from white's perspective (standard convention)
         if mate is not None:
-            eval_html = f'<span class="eval-pill eval-mate">Mate in {abs(mate)}</span>'
+            winner = "White" if mate > 0 else "Black"
+            eval_html = f'<span class="eval-pill eval-mate">{winner} mates in {abs(mate)}</span>'
         elif cp is not None:
             sign = "+" if cp >= 0 else ""
+            # positive cp = white winning (green), negative = black winning (red)
             css = "eval-white" if cp >= 0 else "eval-black"
-            eval_html = f'<span class="eval-pill {css}">{sign}{cp/100:.2f}</span>'
+            who = "White" if cp >= 0 else "Black"
+            eval_html = f'<span class="eval-pill {css}">{who} {sign}{cp/100:.2f}</span>'
         else:
             eval_html = ""
 

@@ -71,7 +71,8 @@ def _extract_eval(info: dict, board: chess.Board) -> tuple[int | None, int | Non
     score = info.get("score")
     if not score:
         return None, None
-    rel = score.white() if board.turn == chess.WHITE else score.black()
-    if rel.is_mate():
-        return None, rel.mate()
-    return rel.score(mate_score=100_000), None
+    # Always white's perspective: positive = white winning, negative = black winning
+    white_pov = score.white()
+    if white_pov.is_mate():
+        return None, white_pov.mate()
+    return white_pov.score(mate_score=100_000), None
