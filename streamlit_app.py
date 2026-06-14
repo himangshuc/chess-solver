@@ -442,8 +442,24 @@ if st.session_state.get("game_active"):
 
     turn_label = "White" if game_board.turn == chess.WHITE else "Black"
 
-    # --- handle board square click (sent via URL query param from the HTML board) ---
-    _sq_click = st.query_params.get("sq", "")
+    # --- hidden text_input receives board clicks from the iframe ---
+    # The iframe JS writes to this via the React native-setter trick, which triggers
+    # Streamlit's onChange handler and causes a rerun — no URL manipulation needed.
+    _sq_click = st.text_input(
+        "sq",
+        value="",
+        key="__sq_click__",
+        label_visibility="collapsed",
+        placeholder="__chess_click__",
+    )
+    st.markdown(
+        "<style>"
+        "div[data-testid='stTextInput']:has(input[placeholder='__chess_click__'])"
+        "{position:fixed;opacity:0;pointer-events:none;width:0;height:0;overflow:hidden}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
     if _sq_click and not game_board.is_game_over():
         _cur_sel = st.session_state.get("game_sel_sq")
         if _cur_sel:
@@ -476,7 +492,7 @@ if st.session_state.get("game_active"):
                     st.session_state["game_sel_sq"] = None
             except Exception:
                 st.session_state["game_sel_sq"] = None
-        del st.query_params["sq"]
+        st.session_state["__sq_click__"] = ""
         st.rerun()
 
     # --- Stockfish suggestion for current position ---
@@ -596,12 +612,16 @@ td{{vertical-align:middle;text-align:center}}
 <table id="b">{''.join(rows)}</table>
 <script>
 (function(){{
+  // Write the clicked square into Streamlit's hidden text_input by using the
+  // React native-setter trick: bypass React's value override so the subsequent
+  // native 'input' event is seen as a real user change, triggering a rerun.
   function send(sq){{
     try{{
-      var p=window.parent;
-      var base=p.location.href.split('?')[0].split('#')[0];
-      p.history.pushState(null,'',base+'?sq='+sq);
-      p.dispatchEvent(new PopStateEvent('popstate',{{bubbles:true,state:null}}));
+      var inp=window.parent.document.querySelector('input[placeholder="__chess_click__"]');
+      if(!inp) return;
+      var setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
+      setter.call(inp,sq);
+      inp.dispatchEvent(new Event('input',{{bubbles:true}}));
     }}catch(e){{}}
   }}
   var b=document.getElementById('b');
