@@ -436,7 +436,7 @@ else:
             svg = chess.svg.board(
                 board,
                 arrows=[arrow],
-                flipped=flip_board,
+                flipped=False,
                 size=380,
                 style=(
                     ".square.light { fill: #f0d9b5; }"
