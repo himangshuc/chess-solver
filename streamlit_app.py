@@ -256,26 +256,43 @@ else:
     san_warnings = []
 
 # ---------------------------------------------------------------------------
-# Step 2 — Side to move + images
+# Step 2 — Side to move + color swap
 # ---------------------------------------------------------------------------
 st.divider()
 st.markdown('<span class="step-badge">2</span> **Who moves next?**', unsafe_allow_html=True)
 
-col_side_w, col_side_b, col_spacer = st.columns([1, 1, 4])
+col_side_w, col_side_b, col_swap, col_spacer = st.columns([1, 1, 2, 2])
 with col_side_w:
     white_btn = st.button("♙ White moves", use_container_width=True,
                           type="primary" if st.session_state.get("side_move", "w") == "w" else "secondary")
 with col_side_b:
     black_btn = st.button("♟ Black moves", use_container_width=True,
                           type="primary" if st.session_state.get("side_move", "w") == "b" else "secondary")
+with col_swap:
+    swap_btn = st.button(
+        "⇄ Swap piece colors",
+        use_container_width=True,
+        help="Use this if the detected white/black labels are swapped — e.g. board uses non-standard piece colors or is viewed from Black's side.",
+    )
 
 if white_btn:
     st.session_state["side_move"] = "w"
 if black_btn:
     st.session_state["side_move"] = "b"
+if swap_btn:
+    st.session_state["swap_colors"] = not st.session_state.get("swap_colors", False)
 
 side_to_move_fen = st.session_state.get("side_move", "w")
 side_label = "White" if side_to_move_fen == "w" else "Black"
+
+# Swap piece colors in FEN if toggled (invert uppercase ↔ lowercase in piece placement)
+if st.session_state.get("swap_colors", False):
+    placement = pred_fen.split()[0]
+    swapped = "".join(c.lower() if c.isupper() else c.upper() if c.islower() else c for c in placement)
+    pred_fen_parts = pred_fen.split()
+    pred_fen_parts[0] = swapped
+    pred_fen = " ".join(pred_fen_parts)
+    st.info("⇄ Piece colors swapped — white and black labels are exchanged.")
 
 pred_fen_parts = pred_fen.split()
 pred_fen_parts[1] = side_to_move_fen
