@@ -12,7 +12,6 @@ import chess
 import chess.svg
 
 import config
-from chess_board import chess_board as _chess_board
 from engine import analyze_best_move_once
 from fen_utils import validate_fen, sanitize_fen, board_from_fen, board_to_pretty, side_to_move as fen_side
 from cv_utils import find_board_and_warp, detect_pieces_yolo, detect_pieces_classical, map_detections_to_fen
@@ -423,6 +422,7 @@ if st.session_state.get("game_active"):
             game_board.pop()
             history.pop()
             st.session_state["game_sf_move"] = None
+            st.session_state["game_sel_sq"] = None
             st.toast("Move undone")
             st.rerun()
     with ctrl2:
@@ -453,35 +453,91 @@ if st.session_state.get("game_active"):
     else:
         best_move = cp = mate = None
 
+    # --- piece selection state ---
+    _sel = st.session_state.get("game_sel_sq")  # selected from-square name e.g. "e2"
+
+    # Build fill map: selected square yellow, valid destinations green
+    _fill: dict[chess.Square, str] = {}
+    _sel_sq_idx: chess.Square | None = None
+    _valid_dests: list[chess.Move] = []
+    if _sel and not game_board.is_game_over():
+        try:
+            _sel_sq_idx = chess.parse_square(_sel)
+            _fill[_sel_sq_idx] = "#f6f624"
+            for _m in game_board.legal_moves:
+                if _m.from_square == _sel_sq_idx:
+                    _fill[_m.to_square] = "#7fc97f"
+                    _valid_dests.append(_m)
+        except Exception:
+            _sel = None
+
     # --- two-column layout: board | controls ---
     col_brd, col_ctrl = st.columns([3, 2])
 
     with col_brd:
-        _last_from = chess.Move.from_uci(history[-1]).uci()[:2] if history else None
-        _last_to   = chess.Move.from_uci(history[-1]).uci()[2:4] if history else None
-        _sf_from   = best_move.uci()[:2] if best_move else None
-        _sf_to     = best_move.uci()[2:4] if best_move else None
+        # SVG board: fill highlights + last-move arrow + SF suggestion arrow
+        _arrows = []
+        if history:
+            _last = chess.Move.from_uci(history[-1])
+            _arrows.append(chess.svg.Arrow(_last.from_square, _last.to_square, color="#4ade80"))
+        if best_move and not _sel:
+            _arrows.append(chess.svg.Arrow(best_move.from_square, best_move.to_square, color="#f97316"))
 
-        move_made = _chess_board(
-            fen=game_board.fen(),
-            sf_from=_sf_from,
-            sf_to=_sf_to,
-            last_from=_last_from,
-            last_to=_last_to,
+        _svg = chess.svg.board(
+            game_board,
+            fill=_fill,
+            arrows=_arrows,
             flipped=(game_board.turn == chess.BLACK),
-            size=420,
-            key="game_board",
+            size=400,
+            style=".square.light{fill:#f0d9b5}.square.dark{fill:#b58863}",
         )
-        if move_made and not game_board.is_game_over():
-            try:
-                m = game_board.parse_uci(move_made)
-                if m in game_board.legal_moves:
-                    game_board.push(m)
-                    history.append(m.uci())
-                    st.session_state["game_sf_move"] = None
-                    st.rerun()
-            except Exception:
-                pass
+        st.markdown(f'<div style="display:flex;justify-content:center">{_svg}</div>', unsafe_allow_html=True)
+
+        if game_board.is_game_over():
+            pass
+        elif _sel and _valid_dests:
+            # Step 2 — pick destination
+            PIECE_GLYPH = {'K':'♔','Q':'♕','R':'♖','B':'♗','N':'♘','P':'♙',
+                           'k':'♚','q':'♛','r':'♜','b':'♝','n':'♞','p':'♟'}
+            _p = game_board.piece_at(_sel_sq_idx)
+            _glyph = PIECE_GLYPH.get(_p.symbol(), '?') if _p else '?'
+            st.markdown(f"**{_glyph} {_sel} → tap destination:**")
+            _dest_cols = st.columns(min(len(_valid_dests), 6))
+            for _i, _mv in enumerate(_valid_dests):
+                _dest_name = chess.square_name(_mv.to_square)
+                _lbl = _dest_name + ("=Q" if _mv.promotion else "")
+                with _dest_cols[_i % 6]:
+                    if st.button(_lbl, key=f"dst_{_mv.uci()}", use_container_width=True):
+                        game_board.push(_mv)
+                        history.append(_mv.uci())
+                        st.session_state["game_sel_sq"] = None
+                        st.session_state["game_sf_move"] = None
+                        st.rerun()
+            if st.button("← Back", key="sel_back"):
+                st.session_state["game_sel_sq"] = None
+                st.rerun()
+        else:
+            # Step 1 — pick piece
+            st.markdown(f"**Tap a {turn_label.lower()} piece to select:**")
+            PIECE_GLYPH = {'K':'♔','Q':'♕','R':'♖','B':'♗','N':'♘','P':'♙',
+                           'k':'♚','q':'♛','r':'♜','b':'♝','n':'♞','p':'♟'}
+            _movable = []
+            for _sq in chess.SQUARES:
+                _p = game_board.piece_at(_sq)
+                if _p and _p.color == game_board.turn:
+                    if any(_m.from_square == _sq for _m in game_board.legal_moves):
+                        _movable.append((_sq, _p))
+            # Sort: major pieces first (Q R B N K P), then by file
+            _order = {chess.QUEEN:0,chess.ROOK:1,chess.BISHOP:2,chess.KNIGHT:3,chess.KING:4,chess.PAWN:5}
+            _movable.sort(key=lambda x: (_order.get(x[1].piece_type, 9), x[0]))
+            _pcols = st.columns(min(len(_movable), 6))
+            for _i, (_sq, _p) in enumerate(_movable):
+                _g = PIECE_GLYPH.get(_p.symbol(), '?')
+                _sn = chess.square_name(_sq)
+                with _pcols[_i % 6]:
+                    if st.button(f"{_g}{_sn}", key=f"piece_{_sn}", use_container_width=True):
+                        st.session_state["game_sel_sq"] = _sn
+                        st.rerun()
 
     with col_ctrl:
         if game_board.is_game_over():
@@ -505,6 +561,7 @@ if st.session_state.get("game_active"):
                 if st.button(f"▶ Play {san}", type="primary", use_container_width=True):
                     game_board.push(best_move)
                     history.append(best_move.uci())
+                    st.session_state["game_sel_sq"] = None
                     st.session_state["game_sf_move"] = None
                     st.rerun()
 
