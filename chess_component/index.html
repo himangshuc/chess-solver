@@ -4,162 +4,240 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; padding: 6px; background: transparent; }
-    #wrap { display: flex; justify-content: center; }
-    #board { width: 400px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: transparent; padding: 4px; font-family: sans-serif; }
 
-    /* Square highlight overlays */
-    .square-55d63 { position: relative !important; }
-    .sq-highlight {
-      position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
-      pointer-events: none;
-      z-index: 2;
+    .board-wrap { display: inline-block; border: 3px solid #7a6045; }
+
+    table.chess-board { border-collapse: collapse; display: block; }
+
+    td.sq {
+      width: 52px; height: 52px;
+      text-align: center; vertical-align: middle;
+      cursor: pointer; position: relative;
+      font-size: 0; /* children handle size */
     }
-    .sq-selected  { background: rgba(255,255,0,0.45); }
-    .sq-dest      { background: radial-gradient(circle, rgba(20,200,80,0.55) 30%, transparent 70%); }
-    .sq-sf-from   { background: rgba(249,115,22,0.40); }
-    .sq-sf-to     { background: rgba(249,115,22,0.55); }
-    .sq-last-from { background: rgba(130,202,100,0.40); }
-    .sq-last-to   { background: rgba(130,202,100,0.55); }
+    td.sq.light { background: #f0d9b5; }
+    td.sq.dark  { background: #b58863; }
+
+    /* State highlights — layered via box-shadow so colours compose */
+    td.sq.last-from,
+    td.sq.last-to   { background: #cdd26a !important; }
+    td.sq.sf-from,
+    td.sq.sf-to     { background: #f6b25a !important; }
+    td.sq.selected  { background: #f6f624 !important; }
+
+    /* Valid-destination dot */
+    td.sq.dest::after {
+      content: '';
+      position: absolute;
+      inset: 0; margin: auto;
+      width: 34%; height: 34%;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.25);
+    }
+    /* Capture ring */
+    td.sq.dest-cap::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 0;
+      border: 4px solid rgba(0,0,0,0.25);
+    }
+
+    .piece {
+      display: inline-block;
+      width: 44px; height: 44px;
+      line-height: 44px;
+      font-size: 36px;
+      pointer-events: none;
+      position: relative; z-index: 1;
+      -webkit-user-select: none; user-select: none;
+    }
+    .piece.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 3px #000, 0 1px 4px #000; }
+    .piece.b { color: #1a1a1a; text-shadow: 0 0 2px #fff; }
+
+    /* Coordinates */
+    .coord-file {
+      display: flex; width: 52px;
+      justify-content: flex-end;
+      padding-right: 3px;
+      font-size: 11px; font-weight: 700;
+      color: #7a6045; line-height: 14px;
+    }
+    .coord-rank {
+      display: flex; height: 52px;
+      align-items: flex-start;
+      padding-top: 2px; padding-left: 3px;
+      font-size: 11px; font-weight: 700;
+      color: #7a6045;
+    }
+    .coord-rank.dark-sq  { color: #f0d9b5; }
+    .coord-rank.light-sq { color: #b58863; }
+    .coord-file.dark-sq  { color: #f0d9b5; }
+    .coord-file.light-sq { color: #b58863; }
+
+    .status-bar {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #555;
+      min-height: 16px;
+    }
   </style>
-  <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
-  <link  rel="stylesheet"
-         href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
-  <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
-  <!-- chess.js v0.10.3 — stable API (game_over / turn / move) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 </head>
 <body>
-<div id="wrap"><div id="board"></div></div>
+<div class="board-wrap">
+  <table class="chess-board" id="board"><tbody id="tbody"></tbody></table>
+</div>
+<div class="status-bar" id="status"></div>
+
+<script src="chess.min.js"></script>
 <script>
-// ── Streamlit postMessage protocol ────────────────────────────────────────────
+// ── Streamlit protocol ────────────────────────────────────────────────────────
 function post(type, extra) {
   window.parent.postMessage(Object.assign({ type: type }, extra || {}), '*');
 }
-function setComponentValue(val) { post('streamlit:setComponentValue', { value: val }); }
-function setHeight(h)           { post('streamlit:setFrameHeight',    { height: h  }); }
+function setVal(v)  { post('streamlit:setComponentValue', { value: v }); }
+function setH()     { post('streamlit:setFrameHeight', { height: document.body.scrollHeight + 8 }); }
+
+// ── Piece glyphs ──────────────────────────────────────────────────────────────
+var GLYPH = {
+  P:'♙', N:'♘', B:'♗', R:'♖', Q:'♕', K:'♔',
+  p:'♟', n:'♞', b:'♝', r:'♜', q:'♛', k:'♚'
+};
 
 // ── State ─────────────────────────────────────────────────────────────────────
-var board         = null;
-var game          = null;
-var selectedSq    = null;
-var lastArgs      = {};
+var game = null;
+var sel  = null;   // selected square name e.g. "e2"
+var args = {};
 
-// ── Highlight helpers ─────────────────────────────────────────────────────────
-function clearOverlays() {
-  $('.sq-highlight').remove();
-}
+// ── Build board HTML ──────────────────────────────────────────────────────────
+function render() {
+  if (!game) return;
 
-function overlay(sq, cls) {
-  var $sq = $('.square-' + sq);
-  if ($sq.length) $sq.append('<div class="sq-highlight ' + cls + '"></div>');
-}
+  var sfF = args.sf_from   || '';
+  var sfT = args.sf_to     || '';
+  var lF  = args.last_from || '';
+  var lT  = args.last_to   || '';
 
-function drawHighlights(a) {
-  clearOverlays();
-  if (a.last_from) overlay(a.last_from, 'sq-last-from');
-  if (a.last_to)   overlay(a.last_to,   'sq-last-to');
-  if (a.sf_from)   overlay(a.sf_from,   'sq-sf-from');
-  if (a.sf_to)     overlay(a.sf_to,     'sq-sf-to');
-}
+  // Valid destinations from selected square
+  var dests = {};
+  if (sel) {
+    game.moves({ square: sel, verbose: true }).forEach(function(m) {
+      dests[m.to] = game.get(m.to) ? 'dest-cap' : 'dest';
+    });
+  }
 
-function drawSelection(sq) {
-  clearOverlays();
-  drawHighlights(lastArgs);
-  if (!sq) return;
-  overlay(sq, 'sq-selected');
-  var moves = game.moves({ square: sq, verbose: true });
-  moves.forEach(function(m) { overlay(m.to, 'sq-dest'); });
-}
+  var html = '';
+  for (var r = 0; r < 8; r++) {
+    html += '<tr>';
+    for (var c = 0; c < 8; c++) {
+      var file = String.fromCharCode(97 + c);
+      var rank = 8 - r;
+      var sq   = file + rank;
+      var isLight = (r + c) % 2 === 0;
 
-// ── Move handling (shared by click and drag) ──────────────────────────────────
-function tryMove(from, to) {
-  if (game.game_over()) return false;
-  var move = game.move({ from: from, to: to, promotion: 'q' });
-  if (!move) return false;
-  selectedSq = null;
-  clearOverlays();
-  board.position(game.fen(), false);
-  setComponentValue(move.from + move.to + (move.promotion || ''));
-  return true;
-}
+      var cls = ['sq', isLight ? 'light' : 'dark'];
+      if (sq === sel) cls.push('selected');
+      else if (sq === lF || sq === lT) cls.push(sq === lF ? 'last-from' : 'last-to');
+      if (sq === sfF) cls.push('sf-from');
+      if (sq === sfT) cls.push('sf-to');
+      if (dests[sq])  cls.push(dests[sq]);
 
-// ── Board init ────────────────────────────────────────────────────────────────
-function initBoard(a) {
-  if (board) { board.destroy(); board = null; }
-
-  game = new Chess(a.fen);
-  var draggable = !game.game_over();
-
-  board = Chessboard('board', {
-    position:    a.fen,
-    draggable:   draggable,
-    pieceTheme:  'https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/img/chesspieces/wikipedia/{piece}.png',
-
-    onDragStart: function(source, piece) {
-      if (game.game_over()) return false;
-      if (piece[0] !== game.turn()) return false;
-      selectedSq = source;
-      drawSelection(source);
-    },
-
-    onDrop: function(source, target) {
-      if (!tryMove(source, target)) {
-        selectedSq = null;
-        drawHighlights(lastArgs);
-        return 'snapback';
+      var p = game.get(sq);
+      var inner = '';
+      if (p) {
+        var glyph = GLYPH[p.color === 'w' ? p.type.toUpperCase() : p.type];
+        inner = '<span class="piece ' + p.color + '">' + glyph + '</span>';
       }
-    },
 
-    onSnapEnd: function() {
-      board.position(game.fen(), false);
-      setTimeout(function() { setHeight(document.body.scrollHeight + 4); }, 50);
-    },
+      // Rank coord on leftmost cell
+      if (c === 0) {
+        var coordCls = 'coord-rank ' + (isLight ? 'light-sq' : 'dark-sq');
+        inner = '<span class="' + coordCls + '">' + rank + '</span>' + inner;
+      }
 
-    onSquareClick: function(square) {
-      if (game.game_over()) return;
-      if (selectedSq && selectedSq !== square) {
-        if (tryMove(selectedSq, square)) return;
-      }
-      // Select (or re-select) a piece
-      var pos  = board.position();
-      var piece = pos[square];
-      if (piece && piece[0] === game.turn()) {
-        selectedSq = square;
-        drawSelection(square);
-      } else {
-        selectedSq = null;
-        drawHighlights(lastArgs);
-      }
-    },
+      html += '<td class="' + cls.join(' ') + '" data-sq="' + sq + '">' + inner + '</td>';
+    }
+    html += '</tr>';
+  }
+
+  // File coords row
+  html += '<tr>';
+  for (var c2 = 0; c2 < 8; c2++) {
+    var f2 = String.fromCharCode(97 + c2);
+    var isLt = (7 + c2) % 2 === 0; // rank 1 = row index 7
+    html += '<td style="height:16px;text-align:right;padding-right:3px;">'
+          + '<span class="coord-file ' + (isLt ? 'light-sq' : 'dark-sq') + '">' + f2 + '</span>'
+          + '</td>';
+  }
+  html += '</tr>';
+
+  document.getElementById('tbody').innerHTML = html;
+
+  // Click handlers
+  document.querySelectorAll('td[data-sq]').forEach(function(td) {
+    td.addEventListener('click', function() { onClick(this.dataset.sq); });
   });
 
-  $('#board').width(a.size).height(a.size);
-  board.resize();
-  drawHighlights(a);
-  setTimeout(function() { setHeight(document.body.scrollHeight + 4); }, 80);
+  // Status
+  var turn = game.turn() === 'w' ? 'White' : 'Black';
+  var statusEl = document.getElementById('status');
+  if (game.game_over()) {
+    statusEl.textContent = 'Game over';
+  } else if (sel) {
+    statusEl.textContent = turn + ' — tap a highlighted square to move';
+  } else {
+    statusEl.textContent = turn + ' to move — tap a piece to select';
+  }
+
+  setH();
 }
 
-// ── Render event from Streamlit ───────────────────────────────────────────────
+// ── Click / tap handler ───────────────────────────────────────────────────────
+function onClick(sq) {
+  if (!game || game.game_over()) return;
+
+  if (sel) {
+    // Attempt move
+    var mv = game.move({ from: sel, to: sq, promotion: 'q' });
+    if (mv) {
+      sel = null;
+      render();
+      setVal(mv.from + mv.to + (mv.promotion || ''));
+      return;
+    }
+    // Reselect own piece
+    var p2 = game.get(sq);
+    if (p2 && p2.color === game.turn()) {
+      sel = sq;
+    } else {
+      sel = null;
+    }
+    render();
+    return;
+  }
+
+  var p = game.get(sq);
+  if (p && p.color === game.turn()) {
+    sel = sq;
+    render();
+  }
+}
+
+// ── Streamlit render event ────────────────────────────────────────────────────
 window.addEventListener('message', function(evt) {
   if (evt.data.type !== 'streamlit:render') return;
   var a = evt.data.args || {};
-
-  var fenChanged  = (a.fen  !== lastArgs.fen);
-  var sizeChanged = (a.size !== lastArgs.size);
-  lastArgs = a;
-
-  if (!board || fenChanged || sizeChanged) {
-    initBoard(a);
-  } else {
-    // Same position — just refresh highlights (e.g. SF suggestion arrived)
-    drawHighlights(a);
+  var fenChanged = (!game || a.fen !== args.fen);
+  args = a;
+  if (fenChanged) {
+    game = new Chess(a.fen);
+    sel  = null;
   }
+  render();
 });
 
-// Signal ready
 post('streamlit:componentReady', { apiVersion: 1 });
 </script>
 </body>
