@@ -158,7 +158,7 @@ st.markdown("# ♟ Chess Solver")
 st.markdown("**Upload a board photo — get the best move instantly.**")
 
 # Auto-download model in background on first load
-if not (_MODEL_PATH.exists() and _MODEL_PATH.stat().st_size >= _MIN_MODEL_BYTES):
+if _existing_model() is None:
     with st.spinner("Downloading piece-detection model (~50 MB, one-time)…"):
         _ensure_model()
 else:
