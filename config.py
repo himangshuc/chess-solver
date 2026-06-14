@@ -19,6 +19,10 @@ def stockfish_path() -> str:
     found = shutil.which("stockfish")
     if found:
         return found
+    # apt installs to /usr/games on Debian/Ubuntu (Streamlit Cloud)
+    for candidate in ["/usr/games/stockfish", "/usr/bin/stockfish", "/usr/local/bin/stockfish"]:
+        if Path(candidate).is_file():
+            return candidate
     raise FileNotFoundError(
         "Stockfish not found. Install it (e.g. brew install stockfish) "
         "and set STOCKFISH_PATH in .env, or ensure it is on your PATH."
