@@ -1,0 +1,13 @@
+# core
+numpy>=1.24,<2.0
+opencv-python-headless>=4.8,<4.12
+streamlit>=1.37,<2
+ultralytics>=8.3
+python-chess>=1.10
+python-dotenv>=1.0
+Pillow>=10.2
+
+# PyTorch — CPU wheels; swap for GPU wheels if needed
+torch
+torchvision
+torchaudio

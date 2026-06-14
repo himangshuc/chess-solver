@@ -1,0 +1,17 @@
+# model weights — too large for git, auto-downloaded at startup
+models/*.pt
+models/*.pt.coco_backup
+
+# env
+.env
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
