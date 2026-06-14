@@ -46,11 +46,19 @@ def sanitize_fen(fen: str) -> tuple[str, list[str]]:
                         if p.color == color and p.piece_type == piece_char]
 
         if len(king_squares) == 0:
-            # Place a king at the default back-rank center square if empty
+            # Place king avoiding squares adjacent to the other king
+            other_color = chess.BLACK if color == chess.WHITE else chess.WHITE
+            other_kings = [sq for sq, p in piece_map.items()
+                           if p.color == other_color and p.piece_type == chess.KING]
+            other_king_sq = other_kings[0] if other_kings else None
+
+            def _adjacent(a: int, b: int) -> bool:
+                return chess.square_distance(a, b) <= 1
+
             default_sq = chess.E1 if color == chess.WHITE else chess.E8
             fallback = default_sq
             for sq in ([default_sq] + list(chess.SQUARES)):
-                if sq not in piece_map:
+                if sq not in piece_map and (other_king_sq is None or not _adjacent(sq, other_king_sq)):
                     fallback = sq
                     break
             piece_map[fallback] = chess.Piece(chess.KING, color)

@@ -31,15 +31,17 @@ def _ensure_model() -> str | None:
     _MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     if _MODEL_PATH.exists() and _MODEL_PATH.stat().st_size >= _MIN_MODEL_BYTES:
         return str(_MODEL_PATH)
-    try:
-        with urllib.request.urlopen(_MODEL_URL, timeout=120) as resp:
-            data = resp.read()
-        if len(data) < _MIN_MODEL_BYTES:
-            return None
-        _MODEL_PATH.write_bytes(data)
-        return str(_MODEL_PATH)
-    except Exception:
-        return None
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(_MODEL_URL, timeout=180) as resp:
+                data = resp.read()
+            if len(data) >= _MIN_MODEL_BYTES:
+                _MODEL_PATH.write_bytes(data)
+                return str(_MODEL_PATH)
+        except Exception:
+            if attempt == 0:
+                continue
+    return None
 
 st.set_page_config(
     page_title="Chess Solver",
@@ -308,13 +310,18 @@ pred_fen_parts = pred_fen.split()
 pred_fen_parts[1] = side_to_move_fen
 pred_fen = " ".join(pred_fen_parts)
 
-# Detection images + warnings in collapsed expander
+# Detection method banner
 method_html = (
     '<span class="method-badge badge-yolo">YOLO</span>'
     if detection_method == "YOLO"
-    else '<span class="method-badge badge-cv">Classical CV</span>'
+    else '<span class="method-badge badge-cv">Classical CV (YOLO unavailable — accuracy ~50%)</span>'
 )
-with st.expander(f"🔍 Detection details — {len(detections)} pieces found", expanded=False):
+st.markdown(
+    f"Detection: {method_html} &nbsp;·&nbsp; **{len(detections)} pieces** found",
+    unsafe_allow_html=True,
+)
+
+with st.expander(f"🔍 Detection details", expanded=False):
     col_img1, col_img2 = st.columns(2)
     with col_img1:
         st.markdown(f"**Warped board** {method_html}", unsafe_allow_html=True)
