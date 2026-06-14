@@ -1,3 +1,6 @@
+# interactive chess board component (installed from local package so declare_component works on Streamlit Cloud)
+./chess_board_component
+
 # core
 numpy>=1.24,<2.0
 opencv-python-headless>=4.8,<4.12

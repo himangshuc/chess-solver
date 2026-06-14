@@ -12,6 +12,7 @@ import chess
 import chess.svg
 
 import config
+from chess_board import chess_board as _chess_board
 from engine import analyze_best_move_once
 from fen_utils import validate_fen, sanitize_fen, board_from_fen, board_to_pretty, side_to_move as fen_side
 from cv_utils import find_board_and_warp, detect_pieces_yolo, detect_pieces_classical, map_detections_to_fen
@@ -456,40 +457,31 @@ if st.session_state.get("game_active"):
     col_brd, col_ctrl = st.columns([3, 2])
 
     with col_brd:
-        # Board SVG — last move green, SF suggestion orange
-        _arrows = []
-        if history:
-            _last = chess.Move.from_uci(history[-1])
-            _arrows.append(chess.svg.Arrow(_last.from_square, _last.to_square, color="#4ade80"))
-        if best_move:
-            _arrows.append(chess.svg.Arrow(best_move.from_square, best_move.to_square, color="#f97316"))
-        _svg = chess.svg.board(
-            game_board,
-            arrows=_arrows,
-            flipped=(game_board.turn == chess.BLACK),
-            size=380,
-            style=".square.light{fill:#f0d9b5}.square.dark{fill:#b58863}",
-        )
-        st.markdown(f'<div style="display:flex;justify-content:center">{_svg}</div>', unsafe_allow_html=True)
+        _last_from = chess.Move.from_uci(history[-1]).uci()[:2] if history else None
+        _last_to   = chess.Move.from_uci(history[-1]).uci()[2:4] if history else None
+        _sf_from   = best_move.uci()[:2] if best_move else None
+        _sf_to     = best_move.uci()[2:4] if best_move else None
 
-        # Legal move buttons — tap any move to play it
-        if not game_board.is_game_over():
-            st.markdown("<br>**Tap a move to play:**", unsafe_allow_html=True)
-            _legal = sorted(
-                [(m, game_board.san(m)) for m in game_board.legal_moves],
-                key=lambda x: x[1],
-            )
-            _ncols = 5
-            for _i in range(0, len(_legal), _ncols):
-                _row = _legal[_i:_i + _ncols]
-                _cols = st.columns(_ncols)
-                for _j, (_mv, _san) in enumerate(_row):
-                    with _cols[_j]:
-                        if st.button(_san, key=f"mv_{_mv.uci()}", use_container_width=True):
-                            game_board.push(_mv)
-                            history.append(_mv.uci())
-                            st.session_state["game_sf_move"] = None
-                            st.rerun()
+        move_made = _chess_board(
+            fen=game_board.fen(),
+            sf_from=_sf_from,
+            sf_to=_sf_to,
+            last_from=_last_from,
+            last_to=_last_to,
+            flipped=(game_board.turn == chess.BLACK),
+            size=420,
+            key="game_board",
+        )
+        if move_made and not game_board.is_game_over():
+            try:
+                m = game_board.parse_uci(move_made)
+                if m in game_board.legal_moves:
+                    game_board.push(m)
+                    history.append(m.uci())
+                    st.session_state["game_sf_move"] = None
+                    st.rerun()
+            except Exception:
+                pass
 
     with col_ctrl:
         if game_board.is_game_over():
