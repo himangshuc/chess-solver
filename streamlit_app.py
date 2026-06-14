@@ -442,6 +442,43 @@ if st.session_state.get("game_active"):
 
     turn_label = "White" if game_board.turn == chess.WHITE else "Black"
 
+    # --- handle board square click (sent via URL query param from the HTML board) ---
+    _sq_click = st.query_params.get("sq", "")
+    if _sq_click and not game_board.is_game_over():
+        _cur_sel = st.session_state.get("game_sel_sq")
+        if _cur_sel:
+            # Second tap — attempt the move
+            try:
+                _from_idx = chess.parse_square(_cur_sel)
+                _to_idx   = chess.parse_square(_sq_click)
+                _cands = sorted(
+                    [m for m in game_board.legal_moves
+                     if m.from_square == _from_idx and m.to_square == _to_idx],
+                    key=lambda m: m.promotion or 0, reverse=True,
+                )
+                if _cands:
+                    game_board.push(_cands[0])
+                    history.append(_cands[0].uci())
+                    st.session_state["game_sf_move"] = None
+            except Exception:
+                pass
+            st.session_state["game_sel_sq"] = None
+        else:
+            # First tap — select piece
+            try:
+                _tap_idx = chess.parse_square(_sq_click)
+                _tap_p   = game_board.piece_at(_tap_idx)
+                if _tap_p and _tap_p.color == game_board.turn and any(
+                    m.from_square == _tap_idx for m in game_board.legal_moves
+                ):
+                    st.session_state["game_sel_sq"] = _sq_click
+                else:
+                    st.session_state["game_sel_sq"] = None
+            except Exception:
+                st.session_state["game_sel_sq"] = None
+        del st.query_params["sq"]
+        st.rerun()
+
     # --- Stockfish suggestion for current position ---
     sf_move = st.session_state.get("game_sf_move")
     if sf_move is None and not game_board.is_game_over():
@@ -453,91 +490,112 @@ if st.session_state.get("game_active"):
     else:
         best_move = cp = mate = None
 
-    # --- piece selection state ---
-    _sel = st.session_state.get("game_sel_sq")  # selected from-square name e.g. "e2"
-
-    # Build fill map: selected square yellow, valid destinations green
-    _fill: dict[chess.Square, str] = {}
-    _sel_sq_idx: chess.Square | None = None
-    _valid_dests: list[chess.Move] = []
-    if _sel and not game_board.is_game_over():
+    # --- build interactive HTML board ---
+    _sel = st.session_state.get("game_sel_sq")
+    _valid_dest_sqs: set[chess.Square] = set()
+    if _sel:
         try:
-            _sel_sq_idx = chess.parse_square(_sel)
-            _fill[_sel_sq_idx] = "#f6f624"
+            _sel_idx = chess.parse_square(_sel)
             for _m in game_board.legal_moves:
-                if _m.from_square == _sel_sq_idx:
-                    _fill[_m.to_square] = "#7fc97f"
-                    _valid_dests.append(_m)
+                if _m.from_square == _sel_idx:
+                    _valid_dest_sqs.add(_m.to_square)
         except Exception:
             _sel = None
+
+    def _board_html(sq_size: int = 50) -> str:
+        GLYPH = {'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔',
+                 'p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'}
+        flipped = (game_board.turn == chess.BLACK)
+        lm_from = lm_to = None
+        if history:
+            _lm = chess.Move.from_uci(history[-1])
+            lm_from, lm_to = _lm.from_square, _lm.to_square
+        sf_from = sf_to = None
+        if best_move and not _sel:
+            sf_from, sf_to = best_move.from_square, best_move.to_square
+
+        rows = []
+        for r in range(8):
+            row = []
+            for c in range(8):
+                file_ch = chr(ord('h') - c) if flipped else chr(ord('a') + c)
+                rank_n  = r + 1 if flipped else 8 - r
+                sq_name = f"{file_ch}{rank_n}"
+                sq_idx  = chess.parse_square(sq_name)
+                is_light = (chess.square_file(sq_idx) + chess.square_rank(sq_idx)) % 2 == 1
+                base = "#f0d9b5" if is_light else "#b58863"
+
+                if _sel and sq_idx == chess.parse_square(_sel):
+                    bg = "#f6f624"
+                elif sq_idx in _valid_dest_sqs:
+                    bg = "#7fc97f"
+                elif sq_idx in (lm_from, lm_to):
+                    bg = "#cdd26a"
+                elif sq_idx in (sf_from, sf_to):
+                    bg = "#f6b25a"
+                else:
+                    bg = base
+
+                p = game_board.piece_at(sq_idx)
+                glyph = GLYPH.get(p.symbol(), '') if p else ''
+                if p:
+                    pc = "#fff" if p.color == chess.WHITE else "#111"
+                    ts = ("0 0 3px #000,0 1px 5px #000" if p.color == chess.WHITE
+                          else "0 0 2px #fff,0 0 1px #ccc")
+                    piece_html = f'<span style="color:{pc};text-shadow:{ts};pointer-events:none">{glyph}</span>'
+                else:
+                    piece_html = ""
+
+                dot = ""
+                if sq_idx in _valid_dest_sqs:
+                    if p:
+                        dot = '<div style="position:absolute;inset:0;border:4px solid rgba(0,0,0,0.3);pointer-events:none"></div>'
+                    else:
+                        dot = '<div style="position:absolute;inset:0;margin:auto;width:32%;height:32%;border-radius:50%;background:rgba(0,0,0,0.25);pointer-events:none"></div>'
+
+                coord = ""
+                lc = "#b58863" if is_light else "#f0d9b5"
+                if c == 0:
+                    coord += f'<span style="position:absolute;top:2px;left:3px;font-size:10px;font-weight:700;color:{lc};pointer-events:none">{rank_n}</span>'
+                if r == 7:
+                    coord += f'<span style="position:absolute;bottom:2px;right:3px;font-size:10px;font-weight:700;color:{lc};pointer-events:none">{file_ch}</span>'
+
+                row.append(
+                    f'<td onclick="clickSq(\'{sq_name}\')" style="'
+                    f'width:{sq_size}px;height:{sq_size}px;background:{bg};'
+                    f'text-align:center;vertical-align:middle;cursor:pointer;'
+                    f'font-size:{int(sq_size*0.74)}px;border:none;padding:0;'
+                    f'user-select:none;-webkit-user-select:none;position:relative;">'
+                    f'{coord}{dot}{piece_html}</td>'
+                )
+            rows.append('<tr>' + ''.join(row) + '</tr>')
+
+        total = sq_size * 8 + 6
+        return f'''<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:transparent;display:flex;justify-content:center;padding:4px;
+      font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",serif}}
+table{{border-collapse:collapse;border:3px solid #7a6045}}
+td{{font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",serif}}
+</style></head><body>
+<table>{''.join(rows)}</table>
+<script>
+function clickSq(sq){{
+  try{{
+    window.parent.history.pushState(null,'','?sq='+sq);
+    window.parent.dispatchEvent(new PopStateEvent('popstate'));
+  }}catch(e){{}}
+}}
+</script>
+</body></html>'''
 
     # --- two-column layout: board | controls ---
     col_brd, col_ctrl = st.columns([3, 2])
 
     with col_brd:
-        # SVG board: fill highlights + last-move arrow + SF suggestion arrow
-        _arrows = []
-        if history:
-            _last = chess.Move.from_uci(history[-1])
-            _arrows.append(chess.svg.Arrow(_last.from_square, _last.to_square, color="#4ade80"))
-        if best_move and not _sel:
-            _arrows.append(chess.svg.Arrow(best_move.from_square, best_move.to_square, color="#f97316"))
-
-        _svg = chess.svg.board(
-            game_board,
-            fill=_fill,
-            arrows=_arrows,
-            flipped=(game_board.turn == chess.BLACK),
-            size=400,
-            style=".square.light{fill:#f0d9b5}.square.dark{fill:#b58863}",
-        )
-        st.markdown(f'<div style="display:flex;justify-content:center">{_svg}</div>', unsafe_allow_html=True)
-
-        if game_board.is_game_over():
-            pass
-        elif _sel and _valid_dests:
-            # Step 2 — pick destination
-            PIECE_GLYPH = {'K':'♔','Q':'♕','R':'♖','B':'♗','N':'♘','P':'♙',
-                           'k':'♚','q':'♛','r':'♜','b':'♝','n':'♞','p':'♟'}
-            _p = game_board.piece_at(_sel_sq_idx)
-            _glyph = PIECE_GLYPH.get(_p.symbol(), '?') if _p else '?'
-            st.markdown(f"**{_glyph} {_sel} → tap destination:**")
-            _dest_cols = st.columns(min(len(_valid_dests), 6))
-            for _i, _mv in enumerate(_valid_dests):
-                _dest_name = chess.square_name(_mv.to_square)
-                _lbl = _dest_name + ("=Q" if _mv.promotion else "")
-                with _dest_cols[_i % 6]:
-                    if st.button(_lbl, key=f"dst_{_mv.uci()}", use_container_width=True):
-                        game_board.push(_mv)
-                        history.append(_mv.uci())
-                        st.session_state["game_sel_sq"] = None
-                        st.session_state["game_sf_move"] = None
-                        st.rerun()
-            if st.button("← Back", key="sel_back"):
-                st.session_state["game_sel_sq"] = None
-                st.rerun()
-        else:
-            # Step 1 — pick piece
-            st.markdown(f"**Tap a {turn_label.lower()} piece to select:**")
-            PIECE_GLYPH = {'K':'♔','Q':'♕','R':'♖','B':'♗','N':'♘','P':'♙',
-                           'k':'♚','q':'♛','r':'♜','b':'♝','n':'♞','p':'♟'}
-            _movable = []
-            for _sq in chess.SQUARES:
-                _p = game_board.piece_at(_sq)
-                if _p and _p.color == game_board.turn:
-                    if any(_m.from_square == _sq for _m in game_board.legal_moves):
-                        _movable.append((_sq, _p))
-            # Sort: major pieces first (Q R B N K P), then by file
-            _order = {chess.QUEEN:0,chess.ROOK:1,chess.BISHOP:2,chess.KNIGHT:3,chess.KING:4,chess.PAWN:5}
-            _movable.sort(key=lambda x: (_order.get(x[1].piece_type, 9), x[0]))
-            _pcols = st.columns(min(len(_movable), 6))
-            for _i, (_sq, _p) in enumerate(_movable):
-                _g = PIECE_GLYPH.get(_p.symbol(), '?')
-                _sn = chess.square_name(_sq)
-                with _pcols[_i % 6]:
-                    if st.button(f"{_g}{_sn}", key=f"piece_{_sn}", use_container_width=True):
-                        st.session_state["game_sel_sq"] = _sn
-                        st.rerun()
+        st.components.v1.html(_board_html(sq_size=50), height=50*8 + 16, scrolling=False)
 
     with col_ctrl:
         if game_board.is_game_over():
