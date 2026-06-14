@@ -502,9 +502,21 @@ if st.session_state.get("game_active"):
         except Exception:
             _sel = None
 
-    def _board_html(sq_size: int = 50) -> str:
-        GLYPH = {'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔',
-                 'p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'}
+    def _board_html(sq_size: int = 48) -> str:
+        import base64
+        # SVG pieces from python-chess (CBurnett set, same as lichess)
+        _imgs: dict[str, str] = {}
+        for _sym, (_pt, _c) in {
+            'P': (chess.PAWN,   chess.WHITE), 'N': (chess.KNIGHT, chess.WHITE),
+            'B': (chess.BISHOP, chess.WHITE), 'R': (chess.ROOK,   chess.WHITE),
+            'Q': (chess.QUEEN,  chess.WHITE), 'K': (chess.KING,   chess.WHITE),
+            'p': (chess.PAWN,   chess.BLACK), 'n': (chess.KNIGHT, chess.BLACK),
+            'b': (chess.BISHOP, chess.BLACK), 'r': (chess.ROOK,   chess.BLACK),
+            'q': (chess.QUEEN,  chess.BLACK), 'k': (chess.KING,   chess.BLACK),
+        }.items():
+            _svg = chess.svg.piece(chess.Piece(_pt, _c), size=sq_size)
+            _imgs[_sym] = 'data:image/svg+xml;base64,' + base64.b64encode(_svg.encode()).decode()
+
         flipped = (game_board.turn == chess.BLACK)
         lm_from = lm_to = None
         if history:
@@ -523,7 +535,7 @@ if st.session_state.get("game_active"):
                 sq_name = f"{file_ch}{rank_n}"
                 sq_idx  = chess.parse_square(sq_name)
                 is_light = (chess.square_file(sq_idx) + chess.square_rank(sq_idx)) % 2 == 1
-                base = "#f0d9b5" if is_light else "#b58863"
+                base_bg = "#f0d9b5" if is_light else "#b58863"
 
                 if _sel and sq_idx == chess.parse_square(_sel):
                     bg = "#f6f624"
@@ -534,60 +546,74 @@ if st.session_state.get("game_active"):
                 elif sq_idx in (sf_from, sf_to):
                     bg = "#f6b25a"
                 else:
-                    bg = base
+                    bg = base_bg
 
                 p = game_board.piece_at(sq_idx)
-                glyph = GLYPH.get(p.symbol(), '') if p else ''
-                if p:
-                    pc = "#fff" if p.color == chess.WHITE else "#111"
-                    ts = ("0 0 3px #000,0 1px 5px #000" if p.color == chess.WHITE
-                          else "0 0 2px #fff,0 0 1px #ccc")
-                    piece_html = f'<span style="color:{pc};text-shadow:{ts};pointer-events:none">{glyph}</span>'
-                else:
-                    piece_html = ""
+                piece_html = (
+                    f'<img src="{_imgs[p.symbol()]}" '
+                    f'style="width:{sq_size-2}px;height:{sq_size-2}px;'
+                    f'display:block;margin:auto;pointer-events:none;" />'
+                ) if p else ""
 
                 dot = ""
                 if sq_idx in _valid_dest_sqs:
                     if p:
-                        dot = '<div style="position:absolute;inset:0;border:4px solid rgba(0,0,0,0.3);pointer-events:none"></div>'
+                        dot = f'<div style="position:absolute;inset:0;border:{max(3,sq_size//14)}px solid rgba(0,0,0,0.35);box-sizing:border-box;pointer-events:none"></div>'
                     else:
-                        dot = '<div style="position:absolute;inset:0;margin:auto;width:32%;height:32%;border-radius:50%;background:rgba(0,0,0,0.25);pointer-events:none"></div>'
+                        r_dot = sq_size // 3
+                        dot = f'<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:{r_dot}px;height:{r_dot}px;border-radius:50%;background:rgba(0,0,0,0.28);pointer-events:none"></div>'
 
-                coord = ""
                 lc = "#b58863" if is_light else "#f0d9b5"
+                fs = max(9, sq_size // 6)
+                coord = ""
                 if c == 0:
-                    coord += f'<span style="position:absolute;top:2px;left:3px;font-size:10px;font-weight:700;color:{lc};pointer-events:none">{rank_n}</span>'
+                    coord += f'<span style="position:absolute;top:1px;left:2px;font-size:{fs}px;font-weight:700;color:{lc};pointer-events:none;line-height:1;z-index:1">{rank_n}</span>'
                 if r == 7:
-                    coord += f'<span style="position:absolute;bottom:2px;right:3px;font-size:10px;font-weight:700;color:{lc};pointer-events:none">{file_ch}</span>'
+                    coord += f'<span style="position:absolute;bottom:1px;right:2px;font-size:{fs}px;font-weight:700;color:{lc};pointer-events:none;line-height:1;z-index:1">{file_ch}</span>'
 
                 row.append(
-                    f'<td onclick="clickSq(\'{sq_name}\')" style="'
+                    f'<td data-sq="{sq_name}" style="'
                     f'width:{sq_size}px;height:{sq_size}px;background:{bg};'
-                    f'text-align:center;vertical-align:middle;cursor:pointer;'
-                    f'font-size:{int(sq_size*0.74)}px;border:none;padding:0;'
-                    f'user-select:none;-webkit-user-select:none;position:relative;">'
+                    f'border:none;padding:0;cursor:pointer;position:relative;'
+                    f'touch-action:manipulation;-webkit-tap-highlight-color:transparent;'
+                    f'user-select:none;-webkit-user-select:none;">'
                     f'{coord}{dot}{piece_html}</td>'
                 )
             rows.append('<tr>' + ''.join(row) + '</tr>')
 
-        total = sq_size * 8 + 6
-        return f'''<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+        return f'''<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:transparent;display:flex;justify-content:center;padding:4px;
-      font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",serif}}
-table{{border-collapse:collapse;border:3px solid #7a6045}}
-td{{font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",serif}}
-</style></head><body>
-<table>{''.join(rows)}</table>
+body{{background:transparent;display:flex;justify-content:center;
+      align-items:flex-start;padding:3px;overflow:hidden}}
+table{{border-collapse:collapse;border:3px solid #7a6045;touch-action:manipulation}}
+td{{vertical-align:middle;text-align:center}}
+</style>
+</head><body>
+<table id="b">{''.join(rows)}</table>
 <script>
-function clickSq(sq){{
-  try{{
-    window.parent.history.pushState(null,'','?sq='+sq);
-    window.parent.dispatchEvent(new PopStateEvent('popstate'));
-  }}catch(e){{}}
-}}
+(function(){{
+  function send(sq){{
+    try{{
+      var p=window.parent;
+      var base=p.location.href.split('?')[0].split('#')[0];
+      p.history.pushState(null,'',base+'?sq='+sq);
+      p.dispatchEvent(new PopStateEvent('popstate',{{bubbles:true,state:null}}));
+    }}catch(e){{}}
+  }}
+  var b=document.getElementById('b');
+  b.addEventListener('click',function(e){{
+    var td=e.target.closest('td[data-sq]');
+    if(td) send(td.dataset.sq);
+  }});
+  b.addEventListener('touchend',function(e){{
+    var td=e.target.closest('td[data-sq]');
+    if(td){{e.preventDefault();send(td.dataset.sq);}}
+  }},{{passive:false}});
+}})();
 </script>
 </body></html>'''
 
@@ -595,7 +621,7 @@ function clickSq(sq){{
     col_brd, col_ctrl = st.columns([3, 2])
 
     with col_brd:
-        st.components.v1.html(_board_html(sq_size=50), height=50*8 + 16, scrolling=False)
+        st.components.v1.html(_board_html(sq_size=48), height=48*8 + 14, scrolling=False)
 
     with col_ctrl:
         if game_board.is_game_over():
