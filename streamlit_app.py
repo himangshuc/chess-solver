@@ -390,7 +390,6 @@ else:
                 st.caption(f"PV: {' '.join(pv)}")
 
         with col_board:
-            flipped = side_to_move_fen == "b"
             arrow = chess.svg.Arrow(
                 best_move.from_square,
                 best_move.to_square,
@@ -399,7 +398,7 @@ else:
             svg = chess.svg.board(
                 board,
                 arrows=[arrow],
-                flipped=flipped,
+                flipped=flip_board,
                 size=380,
                 style=(
                     ".square.light { fill: #f0d9b5; }"
