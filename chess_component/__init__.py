@@ -18,6 +18,7 @@ def chess_board(
     sf_to: str | None = None,
     last_from: str | None = None,
     last_to: str | None = None,
+    flipped: bool = False,
     size: int = 400,
     key: str | None = None,
 ) -> str | None:
@@ -41,6 +42,7 @@ def chess_board(
         sf_to=sf_to or "",
         last_from=last_from or "",
         last_to=last_to or "",
+        flipped=flipped,
         size=size,
         key=key,
         default=None,

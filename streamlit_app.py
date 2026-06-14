@@ -231,12 +231,14 @@ if warped is None:
     )
     st.stop()
 
-flip_board = st.session_state.get("flip_board", False)
+# flip_board tracks whether the photo was taken from Black's side.
+# It always follows the side-to-move toggle: if Black moves, assume black is at bottom.
+side_to_move_fen = st.session_state.get("side_move", "w")
+flip_board = (side_to_move_fen == "b")
 
-# Cache detections keyed by image content + orientation so that toggling
-# side-to-move or swap-colors doesn't re-run YOLO (only orientation change does).
+# Cache detections keyed by image content + side-to-move + conf threshold.
 _img_hash = hashlib.md5(warped.tobytes()).hexdigest()[:16]
-_det_cache_key = f"{_img_hash}_{flip_board}_{conf_thresh}"
+_det_cache_key = f"{_img_hash}_{side_to_move_fen}_{conf_thresh}"
 
 if st.session_state.get("_det_cache_key") == _det_cache_key:
     detections = st.session_state["_detections"]
@@ -287,45 +289,17 @@ pred_fen, san_warnings = sanitize_fen(pred_fen)
 # Step 2 — Board orientation, side to move, color swap
 # ---------------------------------------------------------------------------
 st.divider()
-st.markdown('<span class="step-badge">2</span> **Set up the view**', unsafe_allow_html=True)
+st.markdown('<span class="step-badge">2</span> **Whose turn is it?**', unsafe_allow_html=True)
 
-col_orient_w, col_orient_b, col_side_w, col_side_b, col_swap = st.columns([1, 1, 1, 1, 2])
+col_side_w, col_side_b, col_sp = st.columns([1, 1, 3])
 
-with col_orient_w:
-    orient_w_btn = st.button(
-        "⬜ White at bottom",
-        use_container_width=True,
-        type="primary" if not st.session_state.get("flip_board", False) else "secondary",
-        help="Standard view — white pieces at the bottom.",
-    )
-with col_orient_b:
-    orient_b_btn = st.button(
-        "⬛ Black at bottom",
-        use_container_width=True,
-        type="primary" if st.session_state.get("flip_board", False) else "secondary",
-        help="Flip if the photo was taken from Black's side.",
-    )
 with col_side_w:
     white_btn = st.button("♙ White moves", use_container_width=True,
-                          type="primary" if st.session_state.get("side_move", "w") == "w" else "secondary")
+                          type="primary" if side_to_move_fen == "w" else "secondary")
 with col_side_b:
     black_btn = st.button("♟ Black moves", use_container_width=True,
-                          type="primary" if st.session_state.get("side_move", "w") == "b" else "secondary")
-with col_swap:
-    swap_btn = st.button(
-        "⇄ Swap piece colors",
-        use_container_width=True,
-        help="Use if white/black piece labels look reversed.",
-    )
+                          type="primary" if side_to_move_fen == "b" else "secondary")
 
-if orient_w_btn:
-    st.session_state["flip_board"] = False
-    st.toast("Switched to white-at-bottom — redetecting…")
-    st.rerun()
-if orient_b_btn:
-    st.session_state["flip_board"] = True
-    st.toast("Switched to black-at-bottom — redetecting…")
-    st.rerun()
 if white_btn:
     st.session_state["side_move"] = "w"
     st.toast("White to move")
@@ -334,25 +308,9 @@ if black_btn:
     st.session_state["side_move"] = "b"
     st.toast("Black to move")
     st.rerun()
-if swap_btn:
-    st.session_state["swap_colors"] = not st.session_state.get("swap_colors", False)
-    st.toast("Piece colors swapped")
-    st.rerun()
 
-side_to_move_fen = st.session_state.get("side_move", "w")
 side_label = "White" if side_to_move_fen == "w" else "Black"
-_orient_label = "Black at bottom" if flip_board else "White at bottom"
-_swap_label = " · Colors swapped" if st.session_state.get("swap_colors") else ""
-st.caption(f"View: {_orient_label} · {side_label} to move{_swap_label}")
-
-# Swap piece colors in FEN if toggled (invert uppercase ↔ lowercase in piece placement)
-if st.session_state.get("swap_colors", False):
-    placement = pred_fen.split()[0]
-    swapped = "".join(c.lower() if c.isupper() else c.upper() if c.islower() else c for c in placement)
-    pred_fen_parts = pred_fen.split()
-    pred_fen_parts[0] = swapped
-    pred_fen = " ".join(pred_fen_parts)
-    st.info("⇄ Piece colors swapped — white and black labels are exchanged.")
+st.caption(f"{side_label} to move · board shown from {side_label.lower()}'s perspective")
 
 pred_fen_parts = pred_fen.split()
 pred_fen_parts[1] = side_to_move_fen
@@ -408,7 +366,7 @@ def _board_svg(board: chess.Board, arrow: chess.svg.Arrow | None = None, size: i
     return chess.svg.board(
         board,
         arrows=[arrow] if arrow else [],
-        flipped=False,
+        flipped=(board.turn == chess.BLACK),
         size=size,
         style=".square.light{fill:#f0d9b5}.square.dark{fill:#b58863}",
         lastmove=arrow and chess.Move(arrow.tail, arrow.head),
@@ -511,6 +469,7 @@ if st.session_state.get("game_active"):
             sf_to=_sf_to,
             last_from=_last_from,
             last_to=_last_to,
+            flipped=(game_board.turn == chess.BLACK),
             size=420,
             key="interactive_board",
         )
