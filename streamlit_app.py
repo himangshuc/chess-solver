@@ -388,13 +388,44 @@ for w in san_warnings:
     st.warning(f"Auto-fix: {w}")
 
 # ---------------------------------------------------------------------------
-# Step 3 — Stockfish analysis
+# Helpers
 # ---------------------------------------------------------------------------
-st.divider()
-st.markdown('<span class="step-badge">3</span> **Best move**', unsafe_allow_html=True)
-
 sf_path = stockfish_path_input.strip() or None
 
+def _eval_html(cp, mate) -> str:
+    if mate is not None:
+        winner = "White" if mate > 0 else "Black"
+        return f'<span class="eval-pill eval-mate">{winner} mates in {abs(mate)}</span>'
+    if cp is not None:
+        sign = "+" if cp >= 0 else ""
+        css = "eval-white" if cp >= 0 else "eval-black"
+        who = "White" if cp >= 0 else "Black"
+        return f'<span class="eval-pill {css}">{who} {sign}{cp/100:.2f}</span>'
+    return ""
+
+def _board_svg(board: chess.Board, arrow: chess.svg.Arrow | None = None, size: int = 380) -> str:
+    return chess.svg.board(
+        board,
+        arrows=[arrow] if arrow else [],
+        flipped=False,
+        size=size,
+        style=".square.light{fill:#f0d9b5}.square.dark{fill:#b58863}",
+        lastmove=arrow and chess.Move(arrow.tail, arrow.head),
+    )
+
+def _run_stockfish(board: chess.Board):
+    try:
+        return analyze_best_move_once(board, stockfish_path=sf_path, depth=depth, movetime_ms=movetime_ms)
+    except FileNotFoundError as e:
+        st.error(str(e))
+        return None, None, None, {}
+    except Exception as e:
+        st.error(f"Stockfish error: {e}")
+        return None, None, None, {}
+
+# ---------------------------------------------------------------------------
+# Validate detected FEN
+# ---------------------------------------------------------------------------
 valid_fen, fen_err = validate_fen(pred_fen)
 if not valid_fen:
     st.warning(
@@ -402,115 +433,182 @@ if not valid_fen:
         "This usually means the photo is blurry, the board was partially cropped, "
         "or the pieces weren't detected. Try retaking the photo or edit the FEN below."
     )
-else:
-    board = board_from_fen(pred_fen)
-    with st.spinner("Running Stockfish…"):
-        try:
-            best_move, cp, mate, _info = analyze_best_move_once(
-                board,
-                stockfish_path=sf_path,
-                depth=depth,
-                movetime_ms=movetime_ms,
-            )
-        except FileNotFoundError as e:
-            st.error(str(e))
-            best_move = None
-            cp = mate = _info = None
-        except Exception as e:
-            st.error(f"Stockfish error: {e}")
-            st.caption("The position may be illegal. Edit the FEN below and retry.")
-            best_move = None
-            cp = mate = _info = None
-
-    if best_move is None and valid_fen:
-        st.warning("No legal moves — this may be checkmate or stalemate.")
-    elif best_move is not None:
-        san = board.san(best_move)
-        uci = best_move.uci()
-
-        # Eval pill — cp is always from white's perspective (standard convention)
-        if mate is not None:
-            winner = "White" if mate > 0 else "Black"
-            eval_html = f'<span class="eval-pill eval-mate">{winner} mates in {abs(mate)}</span>'
-        elif cp is not None:
-            sign = "+" if cp >= 0 else ""
-            # positive cp = white winning (green), negative = black winning (red)
-            css = "eval-white" if cp >= 0 else "eval-black"
-            who = "White" if cp >= 0 else "Black"
-            eval_html = f'<span class="eval-pill {css}">{who} {sign}{cp/100:.2f}</span>'
-        else:
-            eval_html = ""
-
-        col_card, col_board = st.columns([1, 1])
-
-        with col_card:
-            st.markdown(f"""
-            <div class="move-card">
-                <div class="move-label">Best move for {side_label}</div>
-                <div class="move-san">{san}</div>
-                <div class="move-uci">{uci}</div>
-                {eval_html}
-            </div>
-            """, unsafe_allow_html=True)
-            if debug_mode and _info:
-                pv = [m.uci() for m in _info.get("pv", [])[:6]]
-                st.caption(f"PV: {' '.join(pv)}")
-
-        with col_board:
-            arrow = chess.svg.Arrow(
-                best_move.from_square,
-                best_move.to_square,
-                color="#f97316",
-            )
-            svg = chess.svg.board(
-                board,
-                arrows=[arrow],
-                flipped=False,
-                size=380,
-                style=(
-                    ".square.light { fill: #f0d9b5; }"
-                    ".square.dark  { fill: #b58863; }"
-                ),
-            )
-            st.markdown(
-                f'<div style="display:flex;justify-content:center">{svg}</div>',
-                unsafe_allow_html=True,
-            )
 
 # ---------------------------------------------------------------------------
-# FEN editor (collapsible)
+# Game mode — enter once user clicks the button, persists across reruns
 # ---------------------------------------------------------------------------
 st.divider()
-with st.expander("✏️ Edit position (FEN)", expanded=not valid_fen):
-    col_fen_l, col_fen_r = st.columns([3, 2])
-    with col_fen_l:
-        fen_input = st.text_input(
-            "FEN string",
-            value=pred_fen,
-            help="Format: <placement> <w/b> <castling> <ep> <halfmove> <fullmove>",
-        )
-        v2, e2 = validate_fen(fen_input)
-        if not v2:
-            st.error(f"Invalid FEN — {e2}")
-        else:
-            st.success("Valid position")
-            b2 = board_from_fen(fen_input)
-            with st.expander("Board preview", expanded=False):
-                st.code(board_to_pretty(b2), language="text")
 
-    with col_fen_r:
-        st.markdown("**FEN piece letters**")
-        st.markdown(
-            "| | White | Black |\n"
-            "|--|--|--|\n"
-            "| King | `K` | `k` |\n"
-            "| Queen | `Q` | `q` |\n"
-            "| Rook | `R` | `r` |\n"
-            "| Bishop | `B` | `b` |\n"
-            "| Knight | `N` | `n` |\n"
-            "| Pawn | `P` | `p` |\n\n"
-            "Digits = empty squares. Ranks separated by `/`."
+# "Start playing" button — only show when position is valid and game not active
+if valid_fen and not st.session_state.get("game_active"):
+    col_btn, col_sp = st.columns([2, 5])
+    with col_btn:
+        if st.button("♟ Start playing from this position", type="primary", use_container_width=True):
+            st.session_state["game_active"] = True
+            st.session_state["game_board"] = board_from_fen(pred_fen)
+            st.session_state["game_initial_fen"] = pred_fen
+            st.session_state["game_history"] = []
+            st.session_state["game_sf_move"] = None
+            st.rerun()
+
+if st.session_state.get("game_active"):
+    game_board: chess.Board = st.session_state["game_board"]
+    history: list = st.session_state["game_history"]
+
+    st.markdown('<span class="step-badge">3</span> **Interactive game**', unsafe_allow_html=True)
+
+    # --- top controls ---
+    ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1, 3])
+    with ctrl1:
+        if st.button("↩ Undo", use_container_width=True) and history:
+            game_board.pop()
+            history.pop()
+            st.session_state["game_sf_move"] = None
+            st.toast("Move undone")
+            st.rerun()
+    with ctrl2:
+        if st.button("⟳ Reset", use_container_width=True):
+            st.session_state["game_board"] = board_from_fen(st.session_state["game_initial_fen"])
+            st.session_state["game_history"] = []
+            st.session_state["game_sf_move"] = None
+            st.toast("Reset to detected position")
+            st.rerun()
+    with ctrl3:
+        if st.button("✕ Exit game", use_container_width=True):
+            st.session_state["game_active"] = False
+            st.session_state["game_board"] = None
+            st.session_state["game_history"] = []
+            st.session_state["game_sf_move"] = None
+            st.rerun()
+
+    turn_label = "White" if game_board.turn == chess.WHITE else "Black"
+
+    # --- Stockfish suggestion for current position ---
+    sf_move = st.session_state.get("game_sf_move")
+    if sf_move is None and not game_board.is_game_over():
+        with st.spinner(f"Stockfish analysing for {turn_label}…"):
+            best_move, cp, mate, _info = _run_stockfish(game_board)
+        st.session_state["game_sf_move"] = (best_move, cp, mate)
+    elif sf_move is not None:
+        best_move, cp, mate = sf_move
+    else:
+        best_move = cp = mate = None
+
+    # --- two-column layout: board | controls ---
+    col_brd, col_ctrl = st.columns([3, 2])
+
+    with col_brd:
+        last_arrow = None
+        if history:
+            last = chess.Move.from_uci(history[-1])
+            last_arrow = chess.svg.Arrow(last.from_square, last.to_square, color="#4ade80")
+        sf_arrow = chess.svg.Arrow(best_move.from_square, best_move.to_square, color="#f97316") if best_move else None
+        arrows = [a for a in [last_arrow, sf_arrow] if a]
+        svg = chess.svg.board(
+            game_board,
+            arrows=arrows,
+            flipped=False,
+            size=440,
+            style=".square.light{fill:#f0d9b5}.square.dark{fill:#b58863}",
         )
+        st.markdown(f'<div style="display:flex;justify-content:center">{svg}</div>', unsafe_allow_html=True)
+
+    with col_ctrl:
+        if game_board.is_game_over():
+            result = game_board.result()
+            outcome = game_board.outcome()
+            reason = outcome.termination.name.replace("_", " ").title() if outcome else ""
+            st.success(f"Game over — **{result}** ({reason})")
+        else:
+            # Stockfish suggestion card
+            if best_move:
+                san = game_board.san(best_move)
+                uci = best_move.uci()
+                st.markdown(f"""
+                <div class="move-card" style="padding:1.2rem 1.5rem;margin-bottom:1rem">
+                    <div class="move-label">Stockfish suggests ({turn_label})</div>
+                    <div class="move-san" style="font-size:2.2rem">{san}</div>
+                    <div class="move-uci">{uci}</div>
+                    {_eval_html(cp, mate)}
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"▶ Play {san}", type="primary", use_container_width=True):
+                    game_board.push(best_move)
+                    history.append(best_move.uci())
+                    st.session_state["game_sf_move"] = None
+                    st.rerun()
+
+            st.markdown("**Or enter your own move:**")
+            move_input = st.text_input(
+                "Move (e.g. e2e4 or Nf3)",
+                key="move_input",
+                label_visibility="collapsed",
+                placeholder="e2e4 or Nf3…",
+            )
+            if st.button("Make move", use_container_width=True):
+                move_input = move_input.strip()
+                parsed = None
+                if move_input:
+                    try:
+                        parsed = game_board.parse_uci(move_input)
+                    except Exception:
+                        pass
+                    if parsed is None:
+                        try:
+                            parsed = game_board.parse_san(move_input)
+                        except Exception:
+                            pass
+                if parsed and parsed in game_board.legal_moves:
+                    game_board.push(parsed)
+                    history.append(parsed.uci())
+                    st.session_state["game_sf_move"] = None
+                    st.rerun()
+                elif move_input:
+                    st.error(f"Illegal move: {move_input!r}")
+
+            # Move history
+            if history:
+                st.markdown("**Move history**")
+                pairs = []
+                for i in range(0, len(history), 2):
+                    w = history[i]
+                    b = history[i + 1] if i + 1 < len(history) else ""
+                    pairs.append(f"{i//2 + 1}. {w}  {b}")
+                st.code("\n".join(pairs), language="text")
+
+else:
+    # Not in game mode — show one-shot best move
+    st.markdown('<span class="step-badge">3</span> **Best move**', unsafe_allow_html=True)
+
+    if valid_fen:
+        board = board_from_fen(pred_fen)
+        with st.spinner("Running Stockfish…"):
+            best_move, cp, mate, _info = _run_stockfish(board)
+
+        if best_move is None:
+            st.warning("No legal moves — this may be checkmate or stalemate.")
+        else:
+            san = board.san(best_move)
+            uci = best_move.uci()
+            col_card, col_board = st.columns([1, 1])
+            with col_card:
+                st.markdown(f"""
+                <div class="move-card">
+                    <div class="move-label">Best move for {side_label}</div>
+                    <div class="move-san">{san}</div>
+                    <div class="move-uci">{uci}</div>
+                    {_eval_html(cp, mate)}
+                </div>
+                """, unsafe_allow_html=True)
+                if debug_mode and _info:
+                    pv = [m.uci() for m in _info.get("pv", [])[:6]]
+                    st.caption(f"PV: {' '.join(pv)}")
+            with col_board:
+                arrow = chess.svg.Arrow(best_move.from_square, best_move.to_square, color="#f97316")
+                st.markdown(
+                    f'<div style="display:flex;justify-content:center">{_board_svg(board, arrow)}</div>',
+                    unsafe_allow_html=True,
+                )
 
 if debug_mode:
     with st.expander("Debug — raw detections"):
