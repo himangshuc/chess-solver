@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import streamlit as st
 import chess
+import chess.svg
 
 import config
 from engine import analyze_best_move_once
@@ -298,33 +299,26 @@ pred_fen_parts = pred_fen.split()
 pred_fen_parts[1] = side_to_move_fen
 pred_fen = " ".join(pred_fen_parts)
 
-# Show images side by side
-st.markdown("")
-col_img1, col_img2 = st.columns(2)
-with col_img1:
-    method_html = (
-        '<span class="method-badge badge-yolo">YOLO</span>'
-        if detection_method == "YOLO"
-        else '<span class="method-badge badge-cv">Classical CV</span>'
-    )
-    st.markdown(f"**Detected board** {method_html} — {len(detections)} pieces", unsafe_allow_html=True)
-    st.image(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB), use_container_width=True)
-
-with col_img2:
-    st.markdown("**Piece detection overlay**")
-    st.image(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB), use_container_width=True)
-
-# Classical CV warning
-if yolo_err_msg:
-    with st.expander("ℹ️ Using classical CV — piece types may be ~50% accurate", expanded=False):
+# Detection images + warnings in collapsed expander
+method_html = (
+    '<span class="method-badge badge-yolo">YOLO</span>'
+    if detection_method == "YOLO"
+    else '<span class="method-badge badge-cv">Classical CV</span>'
+)
+with st.expander(f"🔍 Detection details — {len(detections)} pieces found", expanded=False):
+    col_img1, col_img2 = st.columns(2)
+    with col_img1:
+        st.markdown(f"**Warped board** {method_html}", unsafe_allow_html=True)
+        st.image(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB), use_container_width=True)
+    with col_img2:
+        st.markdown("**Piece overlay**")
+        st.image(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB), use_container_width=True)
+    if yolo_err_msg:
         st.warning(
-            "**YOLO model unavailable** — piece *type* detection is approximate.\n\n"
-            "**To enable accurate detection (free, no login):**\n"
-            "1. Run `python download_model.py` — auto-downloads the public model (~50 MB)\n"
-            "2. Or manually download `best.pt` from "
+            "**YOLO model unavailable** — piece *type* detection is approximate (~50%).\n\n"
+            "Run `python download_model.py` to auto-download the public model, or grab `best.pt` from "
             "[NAKSTStudio/yolov8m-chess-piece-detection](https://huggingface.co/NAKSTStudio/yolov8m-chess-piece-detection) "
-            "and place it at `models/chess_pieces_yolov8n.pt`\n\n"
-            f"Error: `{yolo_err_msg}`"
+            f"and place it at `models/chess_pieces_yolov8n.pt`\n\nError: `{yolo_err_msg}`"
         )
 
 for w in san_warnings:
@@ -380,18 +374,42 @@ else:
         else:
             eval_html = ""
 
-        st.markdown(f"""
-        <div class="move-card">
-            <div class="move-label">Best move for {side_label}</div>
-            <div class="move-san">{san}</div>
-            <div class="move-uci">{uci}</div>
-            {eval_html}
-        </div>
-        """, unsafe_allow_html=True)
+        col_card, col_board = st.columns([1, 1])
 
-        if debug_mode and _info:
-            pv = [m.uci() for m in _info.get("pv", [])[:6]]
-            st.caption(f"PV: {' '.join(pv)}")
+        with col_card:
+            st.markdown(f"""
+            <div class="move-card">
+                <div class="move-label">Best move for {side_label}</div>
+                <div class="move-san">{san}</div>
+                <div class="move-uci">{uci}</div>
+                {eval_html}
+            </div>
+            """, unsafe_allow_html=True)
+            if debug_mode and _info:
+                pv = [m.uci() for m in _info.get("pv", [])[:6]]
+                st.caption(f"PV: {' '.join(pv)}")
+
+        with col_board:
+            flipped = side_to_move_fen == "b"
+            arrow = chess.svg.Arrow(
+                best_move.from_square,
+                best_move.to_square,
+                color="#f97316",
+            )
+            svg = chess.svg.board(
+                board,
+                arrows=[arrow],
+                flipped=flipped,
+                size=380,
+                style=(
+                    ".square.light { fill: #f0d9b5; }"
+                    ".square.dark  { fill: #b58863; }"
+                ),
+            )
+            st.markdown(
+                f'<div style="display:flex;justify-content:center">{svg}</div>',
+                unsafe_allow_html=True,
+            )
 
 # ---------------------------------------------------------------------------
 # FEN editor (collapsible)
