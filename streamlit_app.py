@@ -129,14 +129,6 @@ with st.sidebar:
             st.success(f"Saved → {save_path}")
         conf_thresh = st.slider("Confidence threshold", 0.10, 0.80, 0.25, step=0.05)
 
-    with st.expander("Board"):
-        orientation = st.radio(
-            "Orientation",
-            ["White at bottom", "Black at bottom"],
-            help="Flip if a1 is at top-right instead of bottom-left.",
-        )
-        flip_board = orientation == "Black at bottom"
-
     debug_mode = st.checkbox("Debug mode", value=config.debug_mode())
 
 # ---------------------------------------------------------------------------
@@ -217,6 +209,7 @@ if warped is None:
     )
     st.stop()
 
+flip_board = st.session_state.get("flip_board", False)
 if flip_board:
     warped = cv2.rotate(warped, cv2.ROTATE_180)
 
@@ -257,12 +250,27 @@ else:
     san_warnings = []
 
 # ---------------------------------------------------------------------------
-# Step 2 — Side to move + color swap
+# Step 2 — Board orientation, side to move, color swap
 # ---------------------------------------------------------------------------
 st.divider()
-st.markdown('<span class="step-badge">2</span> **Who moves next?**', unsafe_allow_html=True)
+st.markdown('<span class="step-badge">2</span> **Set up the view**', unsafe_allow_html=True)
 
-col_side_w, col_side_b, col_swap, col_spacer = st.columns([1, 1, 2, 2])
+col_orient_w, col_orient_b, col_side_w, col_side_b, col_swap = st.columns([1, 1, 1, 1, 2])
+
+with col_orient_w:
+    orient_w_btn = st.button(
+        "⬜ White at bottom",
+        use_container_width=True,
+        type="primary" if not st.session_state.get("flip_board", False) else "secondary",
+        help="Standard view — white pieces at the bottom.",
+    )
+with col_orient_b:
+    orient_b_btn = st.button(
+        "⬛ Black at bottom",
+        use_container_width=True,
+        type="primary" if st.session_state.get("flip_board", False) else "secondary",
+        help="Flip if the photo was taken from Black's side.",
+    )
 with col_side_w:
     white_btn = st.button("♙ White moves", use_container_width=True,
                           type="primary" if st.session_state.get("side_move", "w") == "w" else "secondary")
@@ -273,9 +281,13 @@ with col_swap:
     swap_btn = st.button(
         "⇄ Swap piece colors",
         use_container_width=True,
-        help="Use this if the detected white/black labels are swapped — e.g. board uses non-standard piece colors or is viewed from Black's side.",
+        help="Use if white/black piece labels look reversed.",
     )
 
+if orient_w_btn:
+    st.session_state["flip_board"] = False
+if orient_b_btn:
+    st.session_state["flip_board"] = True
 if white_btn:
     st.session_state["side_move"] = "w"
 if black_btn:
