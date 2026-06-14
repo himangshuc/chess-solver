@@ -21,26 +21,44 @@ _MODEL_URL = (
     "https://huggingface.co/NAKSTStudio/yolov8m-chess-piece-detection"
     "/resolve/main/best.pt"
 )
-_MODEL_PATH = config.ROOT / "models" / "chess_pieces_yolov8n.pt"
 _MIN_MODEL_BYTES = 100_000
+
+# Prefer the bundled models/ dir; fall back to /tmp (writable on all platforms)
+_CANDIDATE_PATHS = [
+    config.ROOT / "models" / "chess_pieces_yolov8n.pt",
+    Path("/tmp/chess_pieces_yolov8n.pt"),
+]
+
+
+def _existing_model() -> Path | None:
+    for p in _CANDIDATE_PATHS:
+        if p.exists() and p.stat().st_size >= _MIN_MODEL_BYTES:
+            return p
+    return None
 
 
 @st.cache_resource(show_spinner=False)
 def _ensure_model() -> str | None:
     """Download YOLO model if absent. Returns path on success, None on failure."""
-    _MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if _MODEL_PATH.exists() and _MODEL_PATH.stat().st_size >= _MIN_MODEL_BYTES:
-        return str(_MODEL_PATH)
-    for attempt in range(2):
+    existing = _existing_model()
+    if existing:
+        return str(existing)
+    # Try writable locations in order
+    for dest in _CANDIDATE_PATHS:
         try:
-            with urllib.request.urlopen(_MODEL_URL, timeout=180) as resp:
-                data = resp.read()
-            if len(data) >= _MIN_MODEL_BYTES:
-                _MODEL_PATH.write_bytes(data)
-                return str(_MODEL_PATH)
-        except Exception:
-            if attempt == 0:
-                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            for attempt in range(2):
+                try:
+                    with urllib.request.urlopen(_MODEL_URL, timeout=180) as resp:
+                        data = resp.read()
+                    if len(data) >= _MIN_MODEL_BYTES:
+                        dest.write_bytes(data)
+                        return str(dest)
+                except Exception:
+                    if attempt == 0:
+                        continue
+        except OSError:
+            continue  # directory not writable, try next candidate
     return None
 
 st.set_page_config(
@@ -120,7 +138,7 @@ with st.sidebar:
         movetime_ms = st.slider("Max time per move (ms)", 500, 10_000, 3_000, step=250)
 
     with st.expander("Detection"):
-        default_weights = str(_MODEL_PATH)
+        default_weights = str(_existing_model() or _CANDIDATE_PATHS[0])
         yolo_weights_path = st.text_input("YOLO weights (.pt)", value=default_weights)
         uploaded_weights = st.file_uploader("Upload custom weights", type=["pt"])
         if uploaded_weights is not None:
