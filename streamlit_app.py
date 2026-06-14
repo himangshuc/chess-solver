@@ -244,10 +244,7 @@ for d in detections:
 # FEN construction
 mapped = map_detections_to_fen(warped, detections, side_to_move="w")
 pred_fen = mapped["fen"]
-if detection_method != "YOLO":
-    pred_fen, san_warnings = sanitize_fen(pred_fen)
-else:
-    san_warnings = []
+pred_fen, san_warnings = sanitize_fen(pred_fen)
 
 # ---------------------------------------------------------------------------
 # Step 2 — Board orientation, side to move, color swap
@@ -346,7 +343,11 @@ sf_path = stockfish_path_input.strip() or None
 
 valid_fen, fen_err = validate_fen(pred_fen)
 if not valid_fen:
-    st.error(f"Invalid position detected — {fen_err}. Edit the FEN below and retry.")
+    st.warning(
+        f"Position looks incomplete — {fen_err}.  \n"
+        "This usually means the photo is blurry, the board was partially cropped, "
+        "or the pieces weren't detected. Try retaking the photo or edit the FEN below."
+    )
 else:
     board = board_from_fen(pred_fen)
     with st.spinner("Running Stockfish…"):
