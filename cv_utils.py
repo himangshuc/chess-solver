@@ -367,6 +367,7 @@ def map_detections_to_fen(
     board_img: np.ndarray,
     detections: List[Detection],
     side_to_move: str = "w",
+    flip: bool = False,
 ) -> Dict:
     h, w = board_img.shape[:2]
 
@@ -383,6 +384,10 @@ def map_detections_to_fen(
         cy = (y1 + y2) / 2.0
         col = min(int(np.searchsorted(col_bounds[1:-1], cx)), 7)
         row = min(int(np.searchsorted(row_bounds[1:-1], cy)), 7)
+        # If board is from black's perspective, mirror col and row to get standard coords
+        if flip:
+            col = 7 - col
+            row = 7 - row
         sq = f"{chr(ord('a') + col)}{8 - row}"
         if sq not in positions or d.conf > positions[sq][0]:
             positions[sq] = (d.conf, d.cls_name)

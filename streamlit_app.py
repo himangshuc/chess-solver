@@ -230,9 +230,9 @@ if warped is None:
     st.stop()
 
 flip_board = st.session_state.get("flip_board", False)
-if flip_board:
-    warped = cv2.rotate(warped, cv2.ROTATE_180)
 
+# YOLO runs on the original orientation — rotating causes bbox bias to invert,
+# which breaks square-mapping. Classical CV needs rotation for color analysis.
 detection_method = "YOLO"
 yolo_err_msg = None
 with st.spinner("Detecting pieces…"):
@@ -242,16 +242,18 @@ with st.spinner("Detecting pieces…"):
     except Exception as yolo_err:
         detection_method = "Classical CV"
         yolo_err_msg = f"{yolo_err.__class__.__name__}: {yolo_err}"
+        warped_cv = cv2.rotate(warped, cv2.ROTATE_180) if flip_board else warped
         try:
-            detections = detect_pieces_classical(warped)
+            detections = detect_pieces_classical(warped_cv)
         except Exception as e:
             st.error(f"Detection failed: {e}")
             if debug_mode:
                 st.exception(e)
             st.stop()
 
-# Draw detection overlay
-overlay = warped.copy()
+# Draw detection overlay on display image (rotated for classical CV, original for YOLO)
+display_warped = cv2.rotate(warped, cv2.ROTATE_180) if (flip_board and detection_method == "Classical CV") else warped
+overlay = display_warped.copy()
 for d in detections:
     x1, y1, x2, y2 = map(int, d.xyxy)
     cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 220, 80), 2)
@@ -261,8 +263,8 @@ for d in detections:
         cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 80), 1, cv2.LINE_AA,
     )
 
-# FEN construction
-mapped = map_detections_to_fen(warped, detections, side_to_move="w")
+# FEN construction — for YOLO with flipped board, rotate the FEN instead of the image
+mapped = map_detections_to_fen(warped, detections, side_to_move="w", flip=flip_board and detection_method == "YOLO")
 pred_fen = mapped["fen"]
 pred_fen, san_warnings = sanitize_fen(pred_fen)
 
@@ -343,7 +345,7 @@ with st.expander(f"🔍 Detection details", expanded=False):
     col_img1, col_img2 = st.columns(2)
     with col_img1:
         st.markdown(f"**Warped board** {method_html}", unsafe_allow_html=True)
-        st.image(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB), use_container_width=True)
+        st.image(cv2.cvtColor(display_warped, cv2.COLOR_BGR2RGB), use_container_width=True)
     with col_img2:
         st.markdown("**Piece overlay**")
         st.image(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB), use_container_width=True)
