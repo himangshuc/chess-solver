@@ -219,13 +219,16 @@ with st.expander("📷 Board image", expanded=not _game_active_now):
         if SAMPLE_PATH.exists():
             col_s1, col_s2 = st.columns([1, 3])
             with col_s1:
-                st.image(str(SAMPLE_PATH), width=85)
+                st.image(str(SAMPLE_PATH), width=115)
             with col_s2:
                 st.caption("Sample board — use this to try without your own photo.")
-                if st.button("Use sample", type="primary", use_container_width=True):
-                    st.session_state["use_sample"] = True
-                if st.button("Clear", use_container_width=True):
-                    st.session_state.pop("use_sample", None)
+                _b1, _b2, _bpad = st.columns([2, 1, 2])
+                with _b1:
+                    if st.button("Use sample", type="primary", use_container_width=True):
+                        st.session_state["use_sample"] = True
+                with _b2:
+                    if st.button("Clear", use_container_width=True):
+                        st.session_state.pop("use_sample", None)
         else:
             st.info("No sample image found. Add one to `assets/sample_board.jpg`")
 
