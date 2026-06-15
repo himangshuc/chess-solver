@@ -304,32 +304,19 @@ mapped = map_detections_to_fen(warped, detections, side_to_move="w", flip=flip_b
 pred_fen = mapped["fen"]
 pred_fen, san_warnings = sanitize_fen(pred_fen)
 
-# ---------------------------------------------------------------------------
-# Step 2 — Board orientation, side to move, color swap
-# ---------------------------------------------------------------------------
-st.divider()
-st.markdown('<span class="step-badge">2</span> **Whose turn is it?**', unsafe_allow_html=True)
-
-col_side_w, col_side_b, col_sp = st.columns([1, 1, 3])
-
-with col_side_w:
-    white_btn = st.button("♙ White moves", use_container_width=True,
-                          type="primary" if side_to_move_fen == "w" else "secondary")
-with col_side_b:
-    black_btn = st.button("♟ Black moves", use_container_width=True,
-                          type="primary" if side_to_move_fen == "b" else "secondary")
-
-if white_btn:
-    st.session_state["side_move"] = "w"
-    st.toast("White to move")
-    st.rerun()
-if black_btn:
-    st.session_state["side_move"] = "b"
-    st.toast("Black to move")
-    st.rerun()
-
+# Compact B/W toggle — small buttons inline
 side_label = "White" if side_to_move_fen == "w" else "Black"
-st.caption(f"{side_label} to move · board shown from {side_label.lower()}'s perspective")
+_cw, _cb, _csp = st.columns([1, 1, 8])
+with _cw:
+    if st.button("♙ White", use_container_width=True,
+                 type="primary" if side_to_move_fen == "w" else "secondary"):
+        st.session_state["side_move"] = "w"
+        st.rerun()
+with _cb:
+    if st.button("♟ Black", use_container_width=True,
+                 type="primary" if side_to_move_fen == "b" else "secondary"):
+        st.session_state["side_move"] = "b"
+        st.rerun()
 
 pred_fen_parts = pred_fen.split()
 pred_fen_parts[1] = side_to_move_fen
@@ -413,27 +400,22 @@ if not valid_fen:
     )
 
 # ---------------------------------------------------------------------------
-# Game mode — enter once user clicks the button, persists across reruns
+# Auto-start game as soon as valid FEN is detected (or FEN changes)
 # ---------------------------------------------------------------------------
 st.divider()
 
-# "Start playing" button — only show when position is valid and game not active
-if valid_fen and not st.session_state.get("game_active"):
-    col_btn, col_sp = st.columns([2, 5])
-    with col_btn:
-        if st.button("♟ Start playing from this position", type="primary", use_container_width=True):
-            st.session_state["game_active"] = True
-            st.session_state["game_board"] = board_from_fen(pred_fen)
-            st.session_state["game_initial_fen"] = pred_fen
-            st.session_state["game_history"] = []
-            st.session_state["game_sf_move"] = None
-            st.rerun()
+if valid_fen and pred_fen != st.session_state.get("game_initial_fen"):
+    st.session_state["game_active"] = True
+    st.session_state["game_board"] = board_from_fen(pred_fen)
+    st.session_state["game_initial_fen"] = pred_fen
+    st.session_state["game_history"] = []
+    st.session_state["game_sf_move"] = None
+    st.session_state["game_sel_sq"] = None
+    st.session_state["_click_n"] = 0
 
 if st.session_state.get("game_active"):
     game_board: chess.Board = st.session_state["game_board"]
     history: list = st.session_state["game_history"]
-
-    st.markdown('<span class="step-badge">3</span> **Interactive game**', unsafe_allow_html=True)
 
     # --- top controls ---
     ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1, 3])
