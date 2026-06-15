@@ -462,11 +462,9 @@ if st.session_state.get("game_active"):
 
     turn_label = "White" if game_board.turn == chess.WHITE else "Black"
 
-    # --- Stockfish suggestion for current position ---
-    # Skip calculation while user is mid-selection (piece clicked, no move yet)
-    _mid_selection = bool(st.session_state.get("game_sel_sq"))
+    # Stockfish: only when a move was just made (not during piece selection)
     sf_move = st.session_state.get("game_sf_move")
-    if sf_move is None and not game_board.is_game_over() and not _mid_selection:
+    if sf_move is None and not game_board.is_game_over() and not st.session_state.get("game_sel_sq"):
         with st.spinner(f"Stockfish analysing for {turn_label}…"):
             best_move, cp, mate, _info = _run_stockfish(game_board)
         st.session_state["game_sf_move"] = (best_move, cp, mate)
@@ -475,171 +473,153 @@ if st.session_state.get("game_active"):
     else:
         best_move = cp = mate = None
 
-    # --- selection state ---
-    _sel = st.session_state.get("game_sel_sq")
-    _sel_idx: chess.Square | None = None
-    _valid_dest_sqs: set[chess.Square] = set()
-    if _sel:
-        try:
-            _sel_idx = chess.parse_square(_sel)
-            for _m in game_board.legal_moves:
-                if _m.from_square == _sel_idx:
-                    _valid_dest_sqs.add(_m.to_square)
-        except Exception:
-            _sel = None
-            _sel_idx = None
+    # Board in a fragment so selection click only reruns the board (fast),
+    # while move click does a full app rerun for Stockfish.
+    @st.fragment
+    def _board_fragment() -> None:
+        _gb   = st.session_state["game_board"]
+        _hist = st.session_state.get("game_history", [])
+        _sfdat = st.session_state.get("game_sf_move")
+        _best  = _sfdat[0] if _sfdat else None
 
-    # --- build plotly board ---
-    flipped = (game_board.turn == chess.BLACK)
-    lm_from = lm_to = sf_from = sf_to = None
-    if history:
-        _lm = chess.Move.from_uci(history[-1])
-        lm_from, lm_to = _lm.from_square, _lm.to_square
-    if best_move and not _sel:
-        sf_from, sf_to = best_move.from_square, best_move.to_square
+        _sel = st.session_state.get("game_sel_sq")
+        _sel_idx: chess.Square | None = None
+        _vd: set[chess.Square] = set()
+        if _sel:
+            try:
+                _sel_idx = chess.parse_square(_sel)
+                for _m in _gb.legal_moves:
+                    if _m.from_square == _sel_idx:
+                        _vd.add(_m.to_square)
+            except Exception:
+                _sel = None; _sel_idx = None
 
-    _imgs = _piece_imgs()
+        flipped = (_gb.turn == chess.BLACK)
+        lm_from = lm_to = sf_from = sf_to = None
+        if _hist:
+            _lm = chess.Move.from_uci(_hist[-1])
+            lm_from, lm_to = _lm.from_square, _lm.to_square
+        if _best and not _sel:
+            sf_from, sf_to = _best.from_square, _best.to_square
 
-    _fig = go.Figure()
+        imgs = _piece_imgs()
+        fig = go.Figure()
 
-    for _rank in range(8):
-        for _file in range(8):
-            _sq_idx = chess.square(_file, _rank)
-            _is_light = (_rank + _file) % 2 == 1
-            _px = (7 - _file) if flipped else _file
-            _py = (7 - _rank) if flipped else _rank
+        for _rank in range(8):
+            for _file in range(8):
+                _sq = chess.square(_file, _rank)
+                _il = (_rank + _file) % 2 == 1
+                px = (7 - _file) if flipped else _file
+                py = (7 - _rank) if flipped else _rank
+                if _sel_idx is not None and _sq == _sel_idx:
+                    bg = "#f6f624"
+                elif _sq in _vd:
+                    bg = "#7fc97f"
+                elif _sq in (lm_from, lm_to):
+                    bg = "#cdd26a"
+                elif _sq in (sf_from, sf_to):
+                    bg = "#f6b25a"
+                else:
+                    bg = "#f0d9b5" if _il else "#b58863"
+                fig.add_shape(type="rect", x0=px, x1=px+1, y0=py, y1=py+1,
+                              fillcolor=bg, line_width=0, layer="below")
+                _p = _gb.piece_at(_sq)
+                if _p:
+                    fig.add_layout_image(source=imgs[_p.symbol()],
+                                         x=px+0.05, y=py+0.95, xref="x", yref="y",
+                                         sizex=0.9, sizey=0.9,
+                                         layer="above", sizing="stretch")
 
-            if _sel_idx is not None and _sq_idx == _sel_idx:
-                _bg = "#f6f624"
-            elif _sq_idx in _valid_dest_sqs:
-                _bg = "#7fc97f"
-            elif _sq_idx in (lm_from, lm_to):
-                _bg = "#cdd26a"
-            elif _sq_idx in (sf_from, sf_to):
-                _bg = "#f6b25a"
+        for _dest in _vd:
+            dpx = (7 - chess.square_file(_dest)) if flipped else chess.square_file(_dest)
+            dpy = (7 - chess.square_rank(_dest)) if flipped else chess.square_rank(_dest)
+            if _gb.piece_at(_dest):
+                fig.add_shape(type="circle",
+                              x0=dpx+0.05, x1=dpx+0.95, y0=dpy+0.05, y1=dpy+0.95,
+                              line=dict(color="rgba(0,0,0,0.35)", width=5),
+                              fillcolor="rgba(0,0,0,0)", layer="above")
             else:
-                _bg = "#f0d9b5" if _is_light else "#b58863"
+                fig.add_shape(type="circle",
+                              x0=dpx+0.32, x1=dpx+0.68, y0=dpy+0.32, y1=dpy+0.68,
+                              fillcolor="rgba(0,0,0,0.28)", line_width=0, layer="above")
 
-            _fig.add_shape(type="rect", x0=_px, x1=_px+1, y0=_py, y1=_py+1,
-                           fillcolor=_bg, line_width=0, layer="below")
+        for _i in range(8):
+            fig.add_annotation(x=-0.3, y=_i+0.5, showarrow=False,
+                               text=str(_i+1) if not flipped else str(8-_i),
+                               font=dict(size=11, color="#7a6045"), xanchor="center")
+            fig.add_annotation(x=_i+0.5, y=-0.3, showarrow=False,
+                               text=chr(ord('a') + ((7-_i) if flipped else _i)),
+                               font=dict(size=11, color="#7a6045"), yanchor="middle")
 
-            _p = game_board.piece_at(_sq_idx)
-            if _p:
-                _fig.add_layout_image(
-                    source=_imgs[_p.symbol()],
-                    x=_px + 0.05, y=_py + 0.95,
-                    xref="x", yref="y",
-                    sizex=0.9, sizey=0.9,
-                    layer="above", sizing="stretch",
-                )
-
-    # Valid move indicators
-    for _dest in _valid_dest_sqs:
-        _df = chess.square_file(_dest)
-        _dr = chess.square_rank(_dest)
-        _dpx = (7 - _df) if flipped else _df
-        _dpy = (7 - _dr) if flipped else _dr
-        if game_board.piece_at(_dest):  # capture ring
-            _fig.add_shape(type="circle",
-                           x0=_dpx+0.05, x1=_dpx+0.95, y0=_dpy+0.05, y1=_dpy+0.95,
-                           line=dict(color="rgba(0,0,0,0.35)", width=5),
-                           fillcolor="rgba(0,0,0,0)", layer="above")
-        else:  # move dot
-            _fig.add_shape(type="circle",
-                           x0=_dpx+0.32, x1=_dpx+0.68, y0=_dpy+0.32, y1=_dpy+0.68,
-                           fillcolor="rgba(0,0,0,0.28)", line_width=0, layer="above")
-
-    # Rank/file coordinate labels
-    for _i in range(8):
-        _rank_lbl = str(_i + 1) if not flipped else str(8 - _i)
-        _file_lbl = chr(ord('a') + ((7 - _i) if flipped else _i))
-        _fig.add_annotation(x=-0.3, y=_i + 0.5, text=_rank_lbl, showarrow=False,
-                            font=dict(size=11, color="#7a6045"), xanchor="center")
-        _fig.add_annotation(x=_i + 0.5, y=-0.3, text=_file_lbl, showarrow=False,
-                            font=dict(size=11, color="#7a6045"), yanchor="middle")
-
-    # Invisible scatter markers — one per square — for click detection
-    _sx, _sy, _sdata = [], [], []
-    for _rank in range(8):
-        for _file in range(8):
-            _sq_idx = chess.square(_file, _rank)
-            _px = (7 - _file) if flipped else _file
-            _py = (7 - _rank) if flipped else _rank
-            _sx.append(_px + 0.5)
-            _sy.append(_py + 0.5)
-            _sdata.append(chess.square_name(_sq_idx))
-
-    _fig.add_trace(go.Scatter(
-        x=_sx, y=_sy,
-        mode="markers",
-        marker=dict(size=54, opacity=0.001, symbol="square", color="white"),
-        customdata=_sdata,
-        hovertemplate="<b>%{customdata}</b><extra></extra>",
-        showlegend=False,
-    ))
-
-    _fig.update_layout(
-        width=420, height=420,
-        margin=dict(l=25, r=5, t=5, b=25),
-        xaxis=dict(range=[-0.6, 8.1], showgrid=False, zeroline=False,
-                   showticklabels=False, fixedrange=True),
-        yaxis=dict(range=[-0.6, 8.1], showgrid=False, zeroline=False,
-                   showticklabels=False, fixedrange=True, scaleanchor="x"),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        clickmode="event+select",
-        dragmode=False,
-        showlegend=False,
-    )
-
-    # --- two-column layout: board | controls ---
-    col_brd, col_ctrl = st.columns([3, 2])
-
-    with col_brd:
-        # key changes on every processed click to clear plotly's selection state
-        _click_n = st.session_state.get("_click_n", 0)
-        _board_ev = st.plotly_chart(
-            _fig,
-            on_select="rerun",
-            key=f"chess_board_{_click_n}",
-            use_container_width=True,
-            config={"displayModeBar": False, "scrollZoom": False},
+        sx, sy, sd = [], [], []
+        for _rank in range(8):
+            for _file in range(8):
+                _sq = chess.square(_file, _rank)
+                px = (7 - _file) if flipped else _file
+                py = (7 - _rank) if flipped else _rank
+                sx.append(px+0.5); sy.append(py+0.5)
+                sd.append(chess.square_name(_sq))
+        fig.add_trace(go.Scatter(x=sx, y=sy, mode="markers",
+                                 marker=dict(size=54, opacity=0.001,
+                                             symbol="square", color="white"),
+                                 customdata=sd,
+                                 hovertemplate="<b>%{customdata}</b><extra></extra>",
+                                 showlegend=False))
+        fig.update_layout(
+            width=420, height=420, margin=dict(l=25, r=5, t=5, b=25),
+            xaxis=dict(range=[-0.6, 8.1], showgrid=False, zeroline=False,
+                       showticklabels=False, fixedrange=True),
+            yaxis=dict(range=[-0.6, 8.1], showgrid=False, zeroline=False,
+                       showticklabels=False, fixedrange=True, scaleanchor="x"),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            clickmode="event+select", dragmode=False, showlegend=False,
         )
-        if (_board_ev and getattr(_board_ev, "selection", None)
-                and _board_ev.selection.points
-                and not game_board.is_game_over()):
-            _clicked = _board_ev.selection.points[0].get("customdata", "")
-            if _clicked:
-                _cur_sel = st.session_state.get("game_sel_sq")
-                if _cur_sel:
+
+        _cn = st.session_state.get("_click_n", 0)
+        ev = st.plotly_chart(fig, on_select="rerun", key=f"cb_{_cn}",
+                             use_container_width=True,
+                             config={"displayModeBar": False, "scrollZoom": False})
+
+        if (ev and getattr(ev, "selection", None)
+                and ev.selection.points and not _gb.is_game_over()):
+            clicked = ev.selection.points[0].get("customdata", "")
+            if clicked:
+                cur = st.session_state.get("game_sel_sq")
+                if cur:
                     try:
-                        _fi = chess.parse_square(_cur_sel)
-                        _ti = chess.parse_square(_clicked)
-                        _cands = sorted(
-                            [m for m in game_board.legal_moves
-                             if m.from_square == _fi and m.to_square == _ti],
-                            key=lambda m: m.promotion or 0, reverse=True,
-                        )
-                        if _cands:
-                            game_board.push(_cands[0])
-                            history.append(_cands[0].uci())
+                        fi = chess.parse_square(cur)
+                        ti = chess.parse_square(clicked)
+                        cands = sorted(
+                            [m for m in _gb.legal_moves
+                             if m.from_square == fi and m.to_square == ti],
+                            key=lambda m: m.promotion or 0, reverse=True)
+                        if cands:
+                            _gb.push(cands[0])
+                            _hist.append(cands[0].uci())
                             st.session_state["game_sf_move"] = None
                     except Exception:
                         pass
                     st.session_state["game_sel_sq"] = None
+                    st.session_state["_click_n"] = _cn + 1
+                    st.rerun(scope="app")   # full rerun → Stockfish recalculates
                 else:
                     try:
-                        _ti = chess.parse_square(_clicked)
-                        _tp = game_board.piece_at(_ti)
-                        if (_tp and _tp.color == game_board.turn and
-                                any(m.from_square == _ti for m in game_board.legal_moves)):
-                            st.session_state["game_sel_sq"] = _clicked
+                        ti = chess.parse_square(clicked)
+                        tp = _gb.piece_at(ti)
+                        if (tp and tp.color == _gb.turn and
+                                any(m.from_square == ti for m in _gb.legal_moves)):
+                            st.session_state["game_sel_sq"] = clicked
                         else:
                             st.session_state["game_sel_sq"] = None
                     except Exception:
                         st.session_state["game_sel_sq"] = None
-                st.session_state["_click_n"] = _click_n + 1
-                st.rerun()
+                    st.session_state["_click_n"] = _cn + 1
+                    st.rerun()              # fragment-only rerun → instant highlights
+
+    # --- two-column layout ---
+    col_brd, col_ctrl = st.columns([3, 2])
+    with col_brd:
+        _board_fragment()
 
     with col_ctrl:
         if game_board.is_game_over():
