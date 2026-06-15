@@ -20,6 +20,24 @@ from cv_utils import find_board_and_warp, detect_pieces_yolo, detect_pieces_clas
 
 logging.basicConfig(level=logging.WARNING)
 
+
+@st.cache_resource
+def _piece_imgs() -> dict[str, str]:
+    """SVG data URIs for all 12 piece types — cached across reruns."""
+    imgs: dict[str, str] = {}
+    for sym, (pt, c) in {
+        'P': (chess.PAWN,   chess.WHITE), 'N': (chess.KNIGHT, chess.WHITE),
+        'B': (chess.BISHOP, chess.WHITE), 'R': (chess.ROOK,   chess.WHITE),
+        'Q': (chess.QUEEN,  chess.WHITE), 'K': (chess.KING,   chess.WHITE),
+        'p': (chess.PAWN,   chess.BLACK), 'n': (chess.KNIGHT, chess.BLACK),
+        'b': (chess.BISHOP, chess.BLACK), 'r': (chess.ROOK,   chess.BLACK),
+        'q': (chess.QUEEN,  chess.BLACK), 'k': (chess.KING,   chess.BLACK),
+    }.items():
+        svg = chess.svg.piece(chess.Piece(pt, c), size=60)
+        imgs[sym] = 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode()).decode()
+    return imgs
+
+
 _MODEL_URL = (
     "https://huggingface.co/NAKSTStudio/yolov8m-chess-piece-detection"
     "/resolve/main/best.pt"
@@ -445,8 +463,10 @@ if st.session_state.get("game_active"):
     turn_label = "White" if game_board.turn == chess.WHITE else "Black"
 
     # --- Stockfish suggestion for current position ---
+    # Skip calculation while user is mid-selection (piece clicked, no move yet)
+    _mid_selection = bool(st.session_state.get("game_sel_sq"))
     sf_move = st.session_state.get("game_sf_move")
-    if sf_move is None and not game_board.is_game_over():
+    if sf_move is None and not game_board.is_game_over() and not _mid_selection:
         with st.spinner(f"Stockfish analysing for {turn_label}…"):
             best_move, cp, mate, _info = _run_stockfish(game_board)
         st.session_state["game_sf_move"] = (best_move, cp, mate)
@@ -478,18 +498,7 @@ if st.session_state.get("game_active"):
     if best_move and not _sel:
         sf_from, sf_to = best_move.from_square, best_move.to_square
 
-    # Pre-generate SVG piece images (CBurnett set via python-chess = identical to lichess)
-    _imgs: dict[str, str] = {}
-    for _sym, (_pt, _c) in {
-        'P': (chess.PAWN,   chess.WHITE), 'N': (chess.KNIGHT, chess.WHITE),
-        'B': (chess.BISHOP, chess.WHITE), 'R': (chess.ROOK,   chess.WHITE),
-        'Q': (chess.QUEEN,  chess.WHITE), 'K': (chess.KING,   chess.WHITE),
-        'p': (chess.PAWN,   chess.BLACK), 'n': (chess.KNIGHT, chess.BLACK),
-        'b': (chess.BISHOP, chess.BLACK), 'r': (chess.ROOK,   chess.BLACK),
-        'q': (chess.QUEEN,  chess.BLACK), 'k': (chess.KING,   chess.BLACK),
-    }.items():
-        _svg_str = chess.svg.piece(chess.Piece(_pt, _c), size=60)
-        _imgs[_sym] = 'data:image/svg+xml;base64,' + base64.b64encode(_svg_str.encode()).decode()
+    _imgs = _piece_imgs()
 
     _fig = go.Figure()
 
@@ -594,6 +603,7 @@ if st.session_state.get("game_active"):
             on_select="rerun",
             key=f"chess_board_{_click_n}",
             use_container_width=True,
+            config={"displayModeBar": False, "scrollZoom": False},
         )
         if (_board_ev and getattr(_board_ev, "selection", None)
                 and _board_ev.selection.points
