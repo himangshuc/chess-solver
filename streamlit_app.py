@@ -190,44 +190,44 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Step 1 — Image input
 # ---------------------------------------------------------------------------
-st.markdown('<span class="step-badge">1</span> **Choose a board image**', unsafe_allow_html=True)
-
 SAMPLE_PATH = config.ROOT / "assets" / "sample_board.jpg"
-tab_upload, tab_camera, tab_sample = st.tabs(["📁 Upload", "📷 Camera", "🖼 Sample"])
 
+_game_active_now = st.session_state.get("game_active", False)
 img_bgr = None
+with st.expander("📷 Board image", expanded=not _game_active_now):
+    tab_upload, tab_camera, tab_sample = st.tabs(["📁 Upload", "📷 Camera", "🖼 Sample"])
 
-with tab_upload:
-    file = st.file_uploader(
-        "Drop a chessboard photo here",
-        type=["jpg", "jpeg", "png", "webp"],
-        label_visibility="collapsed",
-    )
-    if file is not None:
-        buf = np.frombuffer(file.read(), np.uint8)
-        img_bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-        st.session_state.pop("use_sample", None)
+    with tab_upload:
+        file = st.file_uploader(
+            "Drop a chessboard photo here",
+            type=["jpg", "jpeg", "png", "webp"],
+            label_visibility="collapsed",
+        )
+        if file is not None:
+            buf = np.frombuffer(file.read(), np.uint8)
+            img_bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            st.session_state.pop("use_sample", None)
 
-with tab_camera:
-    cam = st.camera_input("Take a snapshot", label_visibility="collapsed")
-    if cam is not None:
-        buf = np.frombuffer(cam.getvalue(), np.uint8)
-        img_bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-        st.session_state.pop("use_sample", None)
+    with tab_camera:
+        cam = st.camera_input("Take a snapshot", label_visibility="collapsed")
+        if cam is not None:
+            buf = np.frombuffer(cam.getvalue(), np.uint8)
+            img_bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            st.session_state.pop("use_sample", None)
 
-with tab_sample:
-    if SAMPLE_PATH.exists():
-        col_s1, col_s2 = st.columns([2, 1])
-        with col_s1:
-            st.image(str(SAMPLE_PATH), use_container_width=True)
-        with col_s2:
-            st.markdown("**Sample board**\n\nUse this to try the solver without your own photo.")
-            if st.button("Use sample", type="primary", use_container_width=True):
-                st.session_state["use_sample"] = True
-            if st.button("Clear", use_container_width=True):
-                st.session_state.pop("use_sample", None)
-    else:
-        st.info("No sample image found. Add one to `assets/sample_board.jpg`")
+    with tab_sample:
+        if SAMPLE_PATH.exists():
+            col_s1, col_s2 = st.columns([1, 3])
+            with col_s1:
+                st.image(str(SAMPLE_PATH), width=85)
+            with col_s2:
+                st.caption("Sample board — use this to try without your own photo.")
+                if st.button("Use sample", type="primary", use_container_width=True):
+                    st.session_state["use_sample"] = True
+                if st.button("Clear", use_container_width=True):
+                    st.session_state.pop("use_sample", None)
+        else:
+            st.info("No sample image found. Add one to `assets/sample_board.jpg`")
 
 if st.session_state.get("use_sample") and SAMPLE_PATH.exists():
     img_bgr = cv2.imread(str(SAMPLE_PATH))
@@ -304,23 +304,10 @@ mapped = map_detections_to_fen(warped, detections, side_to_move="w", flip=flip_b
 pred_fen = mapped["fen"]
 pred_fen, san_warnings = sanitize_fen(pred_fen)
 
-# Compact B/W toggle — small buttons inline
-side_label = "White" if side_to_move_fen == "w" else "Black"
-_cw, _cb, _csp = st.columns([1, 1, 8])
-with _cw:
-    if st.button("♙ White", use_container_width=True,
-                 type="primary" if side_to_move_fen == "w" else "secondary"):
-        st.session_state["side_move"] = "w"
-        st.rerun()
-with _cb:
-    if st.button("♟ Black", use_container_width=True,
-                 type="primary" if side_to_move_fen == "b" else "secondary"):
-        st.session_state["side_move"] = "b"
-        st.rerun()
-
 pred_fen_parts = pred_fen.split()
 pred_fen_parts[1] = side_to_move_fen
 pred_fen = " ".join(pred_fen_parts)
+side_label = "White" if side_to_move_fen == "w" else "Black"
 
 # Detection method banner
 method_html = (
@@ -542,13 +529,13 @@ if st.session_state.get("game_active"):
                 sx.append(px+0.5); sy.append(py+0.5)
                 sd.append(chess.square_name(_sq))
         fig.add_trace(go.Scatter(x=sx, y=sy, mode="markers",
-                                 marker=dict(size=54, opacity=0.001,
+                                 marker=dict(size=62, opacity=0.001,
                                              symbol="square", color="white"),
                                  customdata=sd,
                                  hovertemplate="<b>%{customdata}</b><extra></extra>",
                                  showlegend=False))
         fig.update_layout(
-            width=420, height=420, margin=dict(l=25, r=5, t=5, b=25),
+            width=560, height=560, margin=dict(l=25, r=5, t=5, b=25),
             xaxis=dict(range=[-0.6, 8.1], showgrid=False, zeroline=False,
                        showticklabels=False, fixedrange=True),
             yaxis=dict(range=[-0.6, 8.1], showgrid=False, zeroline=False,
@@ -599,11 +586,27 @@ if st.session_state.get("game_active"):
                     st.rerun()              # fragment-only rerun → instant highlights
 
     # --- two-column layout ---
-    col_brd, col_ctrl = st.columns([3, 2])
+    col_brd, col_ctrl = st.columns([5, 2])
     with col_brd:
         _board_fragment()
 
     with col_ctrl:
+        # Side-to-move toggle — next to the board
+        _bw1, _bw2 = st.columns(2)
+        with _bw1:
+            if st.button("♙ White", use_container_width=True,
+                         type="primary" if side_to_move_fen == "w" else "secondary"):
+                st.session_state["side_move"] = "w"
+                st.session_state["game_initial_fen"] = ""  # force re-init on new side
+                st.rerun()
+        with _bw2:
+            if st.button("♟ Black", use_container_width=True,
+                         type="primary" if side_to_move_fen == "b" else "secondary"):
+                st.session_state["side_move"] = "b"
+                st.session_state["game_initial_fen"] = ""  # force re-init on new side
+                st.rerun()
+        st.markdown("")
+
         if game_board.is_game_over():
             result = game_board.result()
             outcome = game_board.outcome()
@@ -641,7 +644,7 @@ if st.session_state.get("game_active"):
 
 else:
     # Not in game mode — show one-shot best move
-    st.markdown('<span class="step-badge">3</span> **Best move**', unsafe_allow_html=True)
+    st.markdown("**Best move**")
 
     if valid_fen:
         board = board_from_fen(pred_fen)
