@@ -434,16 +434,11 @@ if st.session_state.get("game_active"):
 
     turn_label = "White" if game_board.turn == chess.WHITE else "Black"
 
-    # Stockfish: only when a move was just made (not during piece selection)
+    # Read cached SF result — actual analysis runs later (after board renders)
     sf_move = st.session_state.get("game_sf_move")
-    if sf_move is None and not game_board.is_game_over() and not st.session_state.get("game_sel_sq"):
-        with st.spinner(f"Stockfish analysing for {turn_label}…"):
-            best_move, cp, mate, _info = _run_stockfish(game_board)
-        st.session_state["game_sf_move"] = (best_move, cp, mate)
-    elif sf_move is not None:
-        best_move, cp, mate = sf_move
-    else:
-        best_move = cp = mate = None
+    best_move = sf_move[0] if sf_move else None
+    cp       = sf_move[1] if sf_move else None
+    mate     = sf_move[2] if sf_move else None
 
     # Board in a fragment so selection click only reruns the board (fast),
     # while move click does a full app rerun for Stockfish.
@@ -616,6 +611,13 @@ if st.session_state.get("game_active"):
             reason = outcome.termination.name.replace("_", " ").title() if outcome else ""
             st.success(f"Game over — **{result}** ({reason})")
         else:
+            # Run Stockfish here — board already rendered above, so user sees move first
+            if st.session_state.get("game_sf_move") is None and not st.session_state.get("game_sel_sq"):
+                with st.spinner(f"Analysing for {turn_label}…"):
+                    _bm, _cp, _mate, _ = _run_stockfish(game_board)
+                st.session_state["game_sf_move"] = (_bm, _cp, _mate)
+                best_move, cp, mate = _bm, _cp, _mate
+
             # Stockfish suggestion card
             if best_move:
                 san = game_board.san(best_move)
